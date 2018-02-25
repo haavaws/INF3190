@@ -34,7 +34,8 @@ struct mip_arp_entry {
   uint8_t mip_addr; /* MIP address of the host */
   uint8_t mac_addr[6]; /* MAC address of the host */
   int socket; /* Socket the interface connected to the MIP address is bound to */
-  time_t timestamp; /* The time at which the entry was stored */
+  /* The time at which the entry was stored, timestamp is 0, entry is empty */
+  time_t timestamp;
 };
 
 int mac_cmp(uint8_t *mac_a, uint8_t *mac_b){
@@ -518,6 +519,8 @@ int main(int argc, char *argv[]){
           }
         }
 
+        //
+        int timeout = 0;
         if(broadcast == 1){
           //Broacast on every ethernet interface
           for(j = 0; j < num_eth_sds; j++){
@@ -556,19 +559,33 @@ int main(int argc, char *argv[]){
           int nfds_bcast;
           struct epoll_event bcast_events[MAX_EVENTS];
           struct ethernet_frame buf;
+          uint8_t tra;
+
           //Wait for respose from broadcast
           for(;;){
+            //Repeat this process until either the timeout is reached in an
+            //epoll_wait call, or the MIP-ARP response is received
+
             //Neither the unix socket awaiting connections and the unix socket
             //connecting the application to the daemon is monitored
             //due to the EPOLLONESHOT event associated with them
             nfds_bcast = epoll_wait(epfd,bcast_events,MAX_EVENTS,PING_TIMEOUT);
-            //No response within the timeout
-            if(nfds==0) break;
+
+            //If no response within the timeout
+            if(nfds==0) {
+              timeout=1;
+              break;
+            }
+
+            //Receive data over ethernet interfaces that have sent data
+            //and handle any unexpected data
             for (j = 0;j<nfds_bcast;j++){
               if(recv(bcast_events[j].data.fd, &buf, sizeof(ethernet_frame) + MAX_MSG_SIZE, 0) == -1){
                 perror("main: recv: ARP response");
                 exit(EXIT_FAILURE);
               }
+
+
               struct mip_arp_entry *entry;
 
               //Check if theethernet frame was intended for this MIP daemon
@@ -578,60 +595,123 @@ int main(int argc, char *argv[]){
                   entry = &local_mip_mac_table[k];
                 }
               }
+
               //Check if the package was sent to the right interface
               if(get_mip_dest(buf.payload) != entry->mip_addr) continue;
-              uint8_t tra = get_mip_tra(buf.payload);
+
+              tra = get_mip_tra(buf.payload);
               uint8_t mip_src = get_mip_src(buf.payload);
               time_t now = time(NULL);
+
               //Check if it is the ARP resonse that was expected
               if(tra == 0b000){
+
                 //Register the MIP and MAC address in the MIP-ARP table
                 for(k = 0; k < MAX_ARP_SIZE; k++){
+
                   if(mip_arp_table[k].timestamp == 0 || now - mip_arp_table[k].timestamp > MIP_ARP_TTL){
+
                     //Overwrite an expired entry if its TTL was exceeded,
                     //or create new entry if there were no expired entries
                     mip_arp_table[k].mip_addr = mip_src;
                     memcpy(mip_arp_table[k].mac_addr,buf.source,MAC_SIZE);
                     mip_arp_table[k].socket = bcast_events[j].data.fd;
                     mip_arp_table[k].timestamp = now;
+
                     break;
                   }
                 }
-              }else if(tra == 0b100){
-                //If the packet was intended for this MIP daemon, but was
-                //a transport message, not the ARP response we were expecting,
-                //update the MIP-ARP table anyway
+              }
+              //If the packet was a transport message, not the ARP response
+              //that was expected
+              else if(tra == 0b100){
+
+                //Discard the package but update the MIP-ARP table if necessary
                 for(k = 0; k < MAX_ARP_SIZE; k++){
-                  //If the
+
+                  //If the mip address exists as an entry or an empty entry
+                  //was reached
                   if(mip_arp_table[k].mip_addr == mip_src || mip_arp_table[k].timestamp == 0){
-                    //Check if the previous entry with the source MIP address has expired
+
+                    //Check if the previous entry with the source MIP address
+                    //has expired or the entry was empty, update the entry
                     if(now - mip_arp_table[k].timestamp > MIP_ARP_TTL){
                       mip_arp_table[k].mip_addr = mip_src;
                       memcpy(mip_arp_table[k].mac_addr,buf.source,MAC_SIZE);
                       mip_arp_table[k].socket = bcast_events[j].data.fd;
                       mip_arp_table[k].timestamp = now;
                     }
+
                     break;
                   }
                 }
-              }else if(tra == 0b001){
+              }
+              //If the packet was an ARP broadcast message, not the APR response
+              //that was expected
+              else if(tra == 0b001){
+                //Respond to the broadcast normally anyway, and update the
+                //MIP-ARP table if necessary
+
+                //Update MIP-ARP table:
+                for(k = 0; k < MAX_ARP_SIZE; k++){
+
+                  //If the mip address exists as an entry or an empty entry
+                  //was reached
+                  if(mip_arp_table[k].mip_addr == mip_src || mip_arp_table[k].timestamp == 0){
+
+                    //Check if the previous entry with the source MIP address
+                    //has expired
+                    if(now - mip_arp_table[k].timestamp > MIP_ARP_TTL){
+                      mip_arp_table[k].mip_addr = mip_src;
+                      memcpy(mip_arp_table[k].mac_addr,buf.source,MAC_SIZE);
+                      mip_arp_table[k].socket = bcast_events[j].data.fd;
+                      mip_arp_table[k].timestamp = now;
+                    }
+
+                    break;
+                  }
+                }
+
+
+                //Respond to the broadcast with a normal MIP-ARP response
                 struct ethernet_frame arp_resp_frame = { 0 };
                 uint8_t arp_resp_tra;
                 char arp_resp_payload;
+
                 arp_resp_tra = 0b000;
                 arp_resp_payload = '\0';
+
                 memcpy(arp_resp_frame.destination,buf.source, MAC_SIZE);
                 memcpy(arp_resp_frame.source,entry->mac_addr, MAC_SIZE);
                 arp_resp_frame.protocol = eth_ptcl;
+
                 //If the packet was an ARP broadcast, respond normally
                 construct_mip_header(&arp_resp_frame.payload,mip_src,entry->mip_addr,arp_resp_tra,&arp_resp_payload);
 
+                if(send(bcast_events[j].data.fd,&arp_resp_frame,sizeof(arp_resp_frame),0) == -1){
+                  //ERROR_HANDLING
+                  perror("main: ping broadcast: send: arp response");
+                  exit(EXIT_FAILURE);
+                }
               }
+            }
+            if(tra == 0b000) break;
+          }
+
+          //Do something if there was a timeout and the MIP-ARP table was not
+          //updated
+          if(timeout == 1){
+            //TODO: handle timeout
+            continue;
+          }
+
+
+          for(j = 0; j < MAX_ARP_SIZE; j++){
+            if(mip_arp_table[j].mip_addr == mip_addr){
+              memcpy(eth_frame->destination,mip_arp_table[j].mac_addr,MAC_SIZE);
             }
           }
         }
-
-
 
         for(j = 0;j<num_eth_sds;j++){
           for(k = 0;k<MAX_ARP_SIZE;k++){
@@ -654,7 +734,7 @@ int main(int argc, char *argv[]){
 
 
 
-
+        //TODO: remove unix connected socket
       }
       //Incoming data on ethernet sockets
       else{
