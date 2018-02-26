@@ -19,10 +19,12 @@
 #define LISTEN_BACKLOG_UNIX 1
 #define MAX_EVENTS 1 /* only handle one epoll event at a time */
 #define MAX_MSG_SIZE 1496 /* ethernet MTU not including MIP header */
+#define MAX_ETH_FRAME_SIZE 1514 /* max message size plus ethernet and mip headers */
 #define MAX_ARP_SIZE 256 /* the maximum size of the MIP-ARP table */
 #define MIP_ARP_TTL 300 /* seconds a MIP-ARP entry is valid */
 #define PING_TIMEOUT 100 /* timout for waiting for ping in milliseconds */
 #define MAC_SIZE 6 /* size of a mac address */
+#define IPC_PONG_RSP_SIZE 5 /* message size of an IPC PONG response */
 
 //TODO: debug-mode / logging
 //TODO: error-handling function
@@ -55,21 +57,21 @@ struct mip_frame{
 } __attribute__((packed));
 
 
-uint8_t get_mip_tra(struct mip_frame frame){
-  return frame.header_bytes[0] >> 5;
+uint8_t get_mip_tra(struct mip_frame *frame){
+  return frame->header_bytes[0] >> 5;
 }
 
-uint8_t get_mip_dest(struct mip_frame frame){
+uint8_t get_mip_dest(struct mip_frame *frame){
   uint8_t destination = 0;
-  destination |= frame.header_bytes[0] << 3;
-  destination |= frame.header_bytes[1] >> 5;
+  destination |= frame->header_bytes[0] << 3;
+  destination |= frame->header_bytes[1] >> 5;
   return destination;
 }
 
-uint8_t get_mip_src(struct mip_frame frame){
+uint8_t get_mip_src(struct mip_frame *frame){
   uint8_t source = 0;
-  source |= frame.header_bytes[1] << 3;
-  source |= frame.header_bytes[2] >> 5;
+  source |= frame->header_bytes[1] << 3;
+  source |= frame->header_bytes[2] >> 5;
   return source;
 }
 
@@ -92,29 +94,17 @@ int listen_eth_sockets(int *fds){
   return 0;
 }
 
-int construct_mip_header(struct mip_frame* frame,uint8_t destination,uint8_t source,uint8_t tra,char* payload){
-  size_t payload_len = strlen(payload);
+int construct_mip_header(struct mip_frame* frame,uint8_t destination,uint8_t source,uint8_t tra,char* payload,int payload_len){
   memset(frame,0,sizeof(struct mip_frame));
+  //Insert the different fields into the header conforming to the specification
   frame->header_bytes[0] |= tra << 5;
   frame->header_bytes[0] |= destination >> 3;
   frame->header_bytes[1] |= destination << 5;
   frame->header_bytes[1] |= source >> 3;
   frame->header_bytes[2] |= source << 5;
-
-  //Check that the message is within specifications
-  if(payload_len>MAX_MSG_SIZE){
-    //ERROR_HANDLING
-    fprintf(stderr,"Message size exceeds limit");
-    return -1;
-  }else if(payload_len % 4 != 0){
-    //ERROR_HANDLING
-    fprintf(stderr,"Message size not a multpile of 4");
-    return -2;
-  }
-
   frame->header_bytes[2] |= (payload_len/4) >> 4;
   frame->header_bytes[3] |= (payload_len/4) << 5;
-  //TTL is always the maximum possible value
+  //TTL is always the maximum possible value:
   frame->header_bytes[3] |= 0b1111;
 
   return 0;
@@ -452,16 +442,16 @@ int main(int argc, char *argv[]){
           exit(EXIT_FAILURE);
         }
       }
-      //Incoming data from connected application
+      //Incoming data from client
       else if(events[i].data.fd == un_sock_conn){
-        //TODO: Rearm socket after completion
-        char msg_buf[MAX_MSG_SIZE] = { 0 };
-        uint8_t mip_addr;
+        char msg_buf[MAX_MSG_SIZE] = { 0 }; /* to hold zero terminated message */
+        uint8_t dest_mip_addr;
+        uint8_t src_mip_addr;
 
         struct msghdr msg = { 0 };
         struct iovec iov[2];
 
-        iov[0].iov_base = &mip_addr;
+        iov[0].iov_base = &dest_mip_addr;
         iov[0].iov_len = sizeof(int);
 
         iov[1].iov_base = msg_buf;
@@ -478,34 +468,53 @@ int main(int argc, char *argv[]){
           exit(EXIT_FAILURE);
         } else if (ret == 0){
           //Application terminated connection
+
+          //Remove the unix connected socket from the epoll instance
           if(epoll_ctl(epfd,EPOLL_CTL_DEL,events[i].data.fd,&events[i]) == -1){
             //ERROR_HANDLING
             perror("main: epoll_ctl: del un_sock_conn");
             exit(EXIT_FAILURE);
-          }//Loop through all triggered events
+          }
+
+          //Close the connected unix socket
           close(events[i].data.fd);
           un_sock_conn = -1;
+
           //Rearm the unix socket listening for connections
           epoll_ctl(epfd,EPOLL_CTL_MOD,un_sock,&ep_un_ev);
-          continue;
+
+          //Discard other events and start over
+          break;
         }
 
 
         //TODO: Transmit message via ethernet to the given MIP address
+        //Length include terminating byte
+        int msg_len = strlen(msg_buf)+1;
 
+        //Make sure message size conforms to specifications, and add padding
+        //if necessary
+        if(msg_len % 4 != 0){
 
+          //Pad the message with 0-bytes
+          for(j = 0; j < msg_len % 4; j++){
+            msg_buf[strlen(msg_buf)+1+j] = '\0';
+          }
 
-
+          //Correct the message length
+          msg_len += msg_len % 4;
+        }
 
         int broadcast = 1; /* indicates if a MIP-ARP broadcast is required */
         //Construct ethernet header:
-        struct ethernet_frame *eth_frame = { 0 };
+        struct ethernet_frame *eth_frame;
+        eth_frame = (struct ethernet_frame *) malloc(sizeof(eth_frame)+msg_len);
 
         eth_frame->protocol = eth_ptcl;
 
         //Check if destination MIP is cached in the MIP-ARP table
         for(j = 0;j<MAX_ARP_SIZE;j++){
-          if(mip_arp_table[j].mip_addr == mip_addr){
+          if(mip_arp_table[j].mip_addr == dest_mip_addr){
             //If it is, set the corresponding MAC address as the destination
             //in the ethernet frame, unless the entry has exceeded the
             //MIP_ARP_TTL time limit
@@ -536,7 +545,7 @@ int main(int argc, char *argv[]){
             //Will send an ARP broacast message
             tra = 0b001;
             bcast_mip_msg = '\0';
-            ret = construct_mip_header(&bcast_frame.payload,mip_addr, local_mip_mac_table[j].mip_addr,tra,&bcast_mip_msg);
+            ret = construct_mip_header(&bcast_frame.payload,dest_mip_addr, local_mip_mac_table[j].mip_addr,tra,&bcast_mip_msg,0);
             if(ret == -1){
               //ERROR_HANDLING
               fprintf(stderr,"Message size exceeds limit");
@@ -558,7 +567,9 @@ int main(int argc, char *argv[]){
           }
           int nfds_bcast;
           struct epoll_event bcast_events[MAX_EVENTS];
-          struct ethernet_frame buf;
+          char buf[MAX_ETH_FRAME_SIZE];
+          struct ethernet_frame *recv_bcast_frame;
+          int ret;
           uint8_t tra;
 
           //Wait for respose from broadcast
@@ -571,8 +582,12 @@ int main(int argc, char *argv[]){
             //due to the EPOLLONESHOT event associated with them
             nfds_bcast = epoll_wait(epfd,bcast_events,MAX_EVENTS,PING_TIMEOUT);
 
+            if(nfds_bcast == -1){
+              //ERROR_HANDLING
+              perror("main: epoll_wait: un_sock_conn: arp response");
+            }
             //If no response within the timeout
-            if(nfds==0) {
+            else if(nfds_bcast==0) {
               timeout=1;
               break;
             }
@@ -580,15 +595,19 @@ int main(int argc, char *argv[]){
             //Receive data over ethernet interfaces that have sent data
             //and handle any unexpected data
             for (j = 0;j<nfds_bcast;j++){
-              if(recv(bcast_events[j].data.fd, &buf, sizeof(ethernet_frame) + MAX_MSG_SIZE, 0) == -1){
+              ret = recv(bcast_events[j].data.fd, &buf, sizeof(struct ethernet_frame) + MAX_MSG_SIZE, 0);
+              if(ret == -1){
                 perror("main: recv: ARP response");
                 exit(EXIT_FAILURE);
               }
+              recv_bcast_frame = (struct ethernet_frame *) buf;
+
+
 
 
               struct mip_arp_entry *entry;
 
-              //Check if theethernet frame was intended for this MIP daemon
+              //Check if the ethernet frame was intended for this MIP daemon
               //Lookup this host's interface
               for(k = 0; k < num_eth_sds; k++){
                 if(local_mip_mac_table[k].socket == bcast_events[j].data.fd){
@@ -597,10 +616,10 @@ int main(int argc, char *argv[]){
               }
 
               //Check if the package was sent to the right interface
-              if(get_mip_dest(buf.payload) != entry->mip_addr) continue;
+              if(get_mip_dest(&recv_bcast_frame->payload) != entry->mip_addr) continue;
 
-              tra = get_mip_tra(buf.payload);
-              uint8_t mip_src = get_mip_src(buf.payload);
+              tra = get_mip_tra(&recv_bcast_frame->payload);
+              uint8_t mip_src = get_mip_src(&recv_bcast_frame->payload);
               time_t now = time(NULL);
 
               //Check if it is the ARP resonse that was expected
@@ -614,7 +633,7 @@ int main(int argc, char *argv[]){
                     //Overwrite an expired entry if its TTL was exceeded,
                     //or create new entry if there were no expired entries
                     mip_arp_table[k].mip_addr = mip_src;
-                    memcpy(mip_arp_table[k].mac_addr,buf.source,MAC_SIZE);
+                    memcpy(mip_arp_table[k].mac_addr,recv_bcast_frame->source,MAC_SIZE);
                     mip_arp_table[k].socket = bcast_events[j].data.fd;
                     mip_arp_table[k].timestamp = now;
 
@@ -637,7 +656,7 @@ int main(int argc, char *argv[]){
                     //has expired or the entry was empty, update the entry
                     if(now - mip_arp_table[k].timestamp > MIP_ARP_TTL){
                       mip_arp_table[k].mip_addr = mip_src;
-                      memcpy(mip_arp_table[k].mac_addr,buf.source,MAC_SIZE);
+                      memcpy(mip_arp_table[k].mac_addr,recv_bcast_frame->source,MAC_SIZE);
                       mip_arp_table[k].socket = bcast_events[j].data.fd;
                       mip_arp_table[k].timestamp = now;
                     }
@@ -663,7 +682,7 @@ int main(int argc, char *argv[]){
                     //has expired
                     if(now - mip_arp_table[k].timestamp > MIP_ARP_TTL){
                       mip_arp_table[k].mip_addr = mip_src;
-                      memcpy(mip_arp_table[k].mac_addr,buf.source,MAC_SIZE);
+                      memcpy(mip_arp_table[k].mac_addr,recv_bcast_frame->source,MAC_SIZE);
                       mip_arp_table[k].socket = bcast_events[j].data.fd;
                       mip_arp_table[k].timestamp = now;
                     }
@@ -681,12 +700,12 @@ int main(int argc, char *argv[]){
                 arp_resp_tra = 0b000;
                 arp_resp_payload = '\0';
 
-                memcpy(arp_resp_frame.destination,buf.source, MAC_SIZE);
+                memcpy(arp_resp_frame.destination,recv_bcast_frame->source, MAC_SIZE);
                 memcpy(arp_resp_frame.source,entry->mac_addr, MAC_SIZE);
                 arp_resp_frame.protocol = eth_ptcl;
 
                 //If the packet was an ARP broadcast, respond normally
-                construct_mip_header(&arp_resp_frame.payload,mip_src,entry->mip_addr,arp_resp_tra,&arp_resp_payload);
+                construct_mip_header(&arp_resp_frame.payload,mip_src,entry->mip_addr,arp_resp_tra,&arp_resp_payload,0);
 
                 if(send(bcast_events[j].data.fd,&arp_resp_frame,sizeof(arp_resp_frame),0) == -1){
                   //ERROR_HANDLING
@@ -706,38 +725,255 @@ int main(int argc, char *argv[]){
           }
 
 
+          //MIP-ARP table was updated, add the destination to the ethernet frame
           for(j = 0; j < MAX_ARP_SIZE; j++){
-            if(mip_arp_table[j].mip_addr == mip_addr){
+            if(mip_arp_table[j].mip_addr == dest_mip_addr){
               memcpy(eth_frame->destination,mip_arp_table[j].mac_addr,MAC_SIZE);
             }
           }
         }
 
-        for(j = 0;j<num_eth_sds;j++){
-          for(k = 0;k<MAX_ARP_SIZE;k++){
-            if(local_mip_mac_table[j].socket == mip_arp_table[k].socket){
-              memcpy(eth_frame->source,local_mip_mac_table[j].mac_addr, MAC_SIZE);
+        struct mip_arp_entry *entry;
+        //Find the source MIP and MAC address, and add the MAC to the ethernet frame
+        for(j = 0; j < num_eth_sds; j++){
+          if(local_mip_mac_table[j].socket == events[i].data.fd){
+            memcpy(eth_frame->source,local_mip_mac_table[j].mac_addr, MAC_SIZE);
+            entry = &local_mip_mac_table[j];
+            break;
+          }
+        }
+
+        src_mip_addr = entry->mip_addr;
+
+        //Construct MIP header:
+        construct_mip_header(&eth_frame->payload,dest_mip_addr,src_mip_addr,0b100,msg_buf,msg_len);
+
+        if(send(events[i].data.fd,eth_frame, sizeof(struct ethernet_frame) + msg_len,0) == -1){
+          //ERROR_HANDLING
+          perror("main: send: un_sock_conn: ping message");
+          exit(EXIT_FAILURE);
+        }
+
+
+
+        int ping_nfds;
+        int pong = 0; /* check if received PONG response */
+        struct epoll_event ping_events[MAX_EVENTS];
+        struct ethernet_frame *ping_recv_frame = { 0 };
+        char buf[MAX_ETH_FRAME_SIZE];
+        timeout = 0;
+
+        //Wait for PONG response
+        for(;;){
+          //If received a pong response the previous iteration, break
+          if(pong == 1) break;
+
+          ping_nfds = epoll_wait(epfd,ping_events,MAX_EVENTS,PING_TIMEOUT);
+
+          if(ping_nfds == -1){
+            //ERROR_HANDLING
+            perror("main: epoll_wait: un_sock_conn: PONG response");
+            exit(EXIT_FAILURE);
+          } else if(ping_nfds == 0){
+            //TODO: timeout
+            timeout=1;
+            break;
+          }
+
+          for(j = 0; j < ping_nfds; j++){
+            ret = recv(ping_events[j].data.fd,buf,MAX_ETH_FRAME_SIZE,0);
+            if(ret == -1){
+              //ERROR_HANDLING
+              perror("main: recv: un_sock_conn: PONG response");
+              exit(EXIT_FAILURE);
+            }
+            ping_recv_frame = (struct ethernet_frame*) buf;
+
+            struct mip_arp_entry *local_arp_entry;
+
+            //Get this interface's MIP address:
+            for(k = 0; k < num_eth_sds; k++){
+              if(local_mip_mac_table[k].socket == ping_events[j].data.fd){
+                local_arp_entry = &local_mip_mac_table[k];
+              }
+            }
+
+            //Was frame for this daemon?
+            uint8_t dest_mip = get_mip_dest(&ping_recv_frame->payload);
+            uint8_t src_mip = get_mip_src(&ping_recv_frame->payload);
+            uint8_t tra = get_mip_tra(&ping_recv_frame->payload);
+            time_t now = time(NULL);
+
+
+            if(dest_mip != local_arp_entry->mip_addr){
+              //Not for this daemon, discard packet
+              continue;
+            }
+
+            if(tra == 0b100){
+              //Frame was a Transport message
+
+              if(strcmp(ping_recv_frame->payload.payload,"PONG") != 0){
+                //Packet was not the PONG response that was expected,
+                //update the MIP-ARP table and discard the packet
+                for(k = 0; k < MAX_ARP_SIZE; k++){
+                  if(mip_arp_table[k].mip_addr == src_mip || mip_arp_table[k].timestamp == 0){
+                    if(now - mip_arp_table[k].timestamp > MIP_ARP_TTL){
+                      mip_arp_table[k].mip_addr = src_mip;
+                      memcpy(mip_arp_table[k].mac_addr,ping_recv_frame->source,MAC_SIZE);
+                      mip_arp_table[k].socket = ping_events[j].data.fd;
+                      mip_arp_table[k].timestamp = now;
+                    }
+                    break;
+                  }
+                }
+                continue;
+              }
+
+
+              char msg_buf[IPC_PONG_RSP_SIZE] = { 0 }; /* to hold the PONG response */
+
+              struct msghdr msg = { 0 };
+              struct iovec iov[1];
+
+              iov[1].iov_base = msg_buf;
+              iov[1].iov_len = sizeof(msg_buf);
+
+              msg.msg_iov = iov;
+              msg.msg_iovlen = sizeof(iov);
+
+              if(sendmsg(un_sock_conn,&msg,0) == -1){
+                //ERROR_HANDLING
+                perror("main: sendmsg: un_sock_conn: PONG response");
+                exit(EXIT_FAILURE);
+              }
+
+              pong = 1;
+
               break;
+            }
+            //If the packet was an ARP broadcast message, not the APR response
+            //that was expected
+            else if(tra == 0b001){
+              //Respond to the broadcast normally anyway, and update the
+              //MIP-ARP table if necessary
+
+              //Update MIP-ARP table:
+              for(k = 0; k < MAX_ARP_SIZE; k++){
+
+                //If the mip address exists as an entry or an empty entry
+                //was reached
+                if(mip_arp_table[k].mip_addr == src_mip || mip_arp_table[k].timestamp == 0){
+
+                  //Check if the previous entry with the source MIP address
+                  //has expired
+                  if(now - mip_arp_table[k].timestamp > MIP_ARP_TTL){
+                    mip_arp_table[k].mip_addr = src_mip;
+                    memcpy(mip_arp_table[k].mac_addr,ping_recv_frame->source,MAC_SIZE);
+                    mip_arp_table[k].socket = ping_events[j].data.fd;
+                    mip_arp_table[k].timestamp = now;
+                  }
+
+                  break;
+                }
+              }
+
+
+              //Respond to the broadcast with a normal MIP-ARP response
+              struct ethernet_frame arp_resp_frame = { 0 };
+              uint8_t arp_resp_tra;
+              char arp_resp_payload;
+
+              arp_resp_tra = 0b000;
+              arp_resp_payload = '\0';
+
+              memcpy(arp_resp_frame.destination,ping_recv_frame->source, MAC_SIZE);
+              memcpy(arp_resp_frame.source,local_arp_entry->mac_addr, MAC_SIZE);
+              arp_resp_frame.protocol = eth_ptcl;
+
+              //If the packet was an ARP broadcast, respond normally
+              construct_mip_header(&arp_resp_frame.payload,src_mip,local_arp_entry->mip_addr,arp_resp_tra,&arp_resp_payload,0);
+
+              if(send(ping_events[j].data.fd,&arp_resp_frame,sizeof(arp_resp_frame),0) == -1){
+                //ERROR_HANDLING
+                perror("main: send: un_sock_conn: PONG response");
+                exit(EXIT_FAILURE);
+              }
             }
           }
         }
 
-        eth_frame->protocol = eth_ptcl;
+        //Delete the unix socket communicating with the daemon from the epoll instance
+        if(epoll_ctl(epfd,EPOLL_CTL_DEL,events[i].data.fd,NULL) == -1){
+          //ERROR_HANDLING
+          perror("main: epoll_ctl: EPOLL_CTL_DEL un_sock_conn ping");
+          exit(EXIT_FAILURE);
+        }
 
-        //Construct MIP header:
+        //Close the socket
+        close(un_sock_conn);
 
+        //Rearm the unix socket listening for connections
+        if(epoll_ctl(epfd,EPOLL_CTL_MOD,un_sock,&ep_un_ev) == -1){
+          //ERROR_HANDLING
+          perror("main: epoll_ctl: EPOLL_CTL_MOD un_sock ping");
+        }
 
-
-
-
-
-
-
-
-        //TODO: remove unix connected socket
+        //Discard remaining events and listen for new connections
+        break;
       }
       //Incoming data on ethernet sockets
       else{
+        struct mip_arp_entry *local_entry;
+        char buf[MAX_ETH_FRAME_SIZE];
+        struct ethernet_frame *eth_recv_frame;
+        uint8_t mip_tra;
+        uint8_t src_mip;
+        uint8_t dest_mip;
+
+        for(j = 0; j < num_eth_sds; j++){
+          if(local_mip_mac_table[j].socket == events[i].data.fd){
+            local_entry = &local_mip_mac_table[j];
+          }
+        }
+
+        if(recv(events[i].data.fd,buf,MAX_ETH_FRAME_SIZE,0) == -1){
+          //ERROR_HANDLING
+          perror("main: recv: eth socket");
+          exit(EXIT_FAILURE);
+        }
+        eth_recv_frame = (struct ethernet_frame *) buf;
+
+        mip_tra = get_mip_tra(&eth_recv_frame->payload);
+        src_mip = get_mip_src(&eth_recv_frame->payload);
+        dest_mip = get_mip_dest(&eth_recv_frame->payload);
+
+        //Check that the destination is right
+        if(local_entry->mip_addr != dest_mip){
+          //Packet was not intended for this MIP daemon:
+          //Discard the packet
+          continue;
+        }
+
+        if(mip_tra == 0b100){
+          struct msghdr msg = { 0 };
+          struct iovec iov[1];
+          iov[0].iov_base = eth_recv_frame->payload.payload;
+          iov[0].iov_len = sizeof(eth_recv_frame->payload.payload);
+
+          msg.msg_iov = iov;
+          msg.msg_iovlen = 1;
+
+          if(sendmsg(un_sock_conn,&msg,0) == -1){
+            //ERROR_HANDLING
+            perror("main: sendmsg: un_sock_conn receive ping");
+            exit(EXIT_FAILURE);
+          }
+
+          
+
+
+        }
 
       }
     }
