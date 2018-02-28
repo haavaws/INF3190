@@ -161,6 +161,7 @@ ssize_t send_mip_packet(struct mip_arp_entry *arp_table,struct mip_arp_entry *lo
   uint16_t eth_ptcl;
   int i;
   int msg_len;
+  ssize_t ret;
 
 
   //ARP response has no payload
@@ -213,10 +214,14 @@ ssize_t send_mip_packet(struct mip_arp_entry *arp_table,struct mip_arp_entry *lo
   //Construct the MIP packet
   construct_mip_packet(&frame->payload,dest_mip,src_mip,tra,payload,msg_len);
 
+
   //Send the MIP packet
-  return send(send_sd,frame,sizeof(struct ethernet_frame) + msg_len,0);
+  ret = send(send_sd,frame,sizeof(struct ethernet_frame) + msg_len,0);
 
   free(frame);
+
+  return ret;
+
 
 }
 
@@ -347,7 +352,7 @@ int setup_unix_socket(char* un_sock_name){
 }
 
 
-int setup_eth_sockets(struct mip_arp_entry *local_mip_mac_table,int num_mip_addrs){
+int setup_eth_sockets(struct mip_arp_entry *local_mip_mac_table,int num_mip_addrs,int debug){
   //Based on code from 'man getifaddrs'
 
   //List of interfaces
@@ -438,6 +443,9 @@ int setup_eth_sockets(struct mip_arp_entry *local_mip_mac_table,int num_mip_addr
 
         return -4;
       }
+      if(debug){
+        fprintf(stdout,"Binding network interface [%s] to MIP address <%d>...\n", ifa->ifa_name,local_mip_mac_table[num_eth_sds-1].mip_addr);
+      }
     }
   } /* Set up raw sockets END */
 
@@ -457,6 +465,7 @@ int recv_mip_packet(struct mip_arp_entry *mip_arp_table,struct mip_arp_entry *lo
   uint8_t src_mip;
   uint8_t dest_mip;
   int i;
+
 
   for(i = 0; i < MAX_ARP_SIZE; i++){
     if(local_mip_mac_table[i].socket == socket){
@@ -480,6 +489,7 @@ int recv_mip_packet(struct mip_arp_entry *mip_arp_table,struct mip_arp_entry *lo
   if(local_entry->mip_addr != dest_mip){
     //Packet was not intended for this MIP daemon:
     //Discard the packet
+
     return -2;
   }
 
@@ -505,7 +515,7 @@ int create_epoll_instance(int un_sock,struct mip_arp_entry *local_mip_mac_table,
   struct epoll_event ep_un_ev = { 0 };
   //TODO:why not edge-triggered
   //Only accept one connection at a time
-  ep_un_ev.events = EPOLLIN|EPOLLONESHOT;
+  ep_un_ev.events = EPOLLIN;
   ep_un_ev.data.fd = un_sock;
 
   //Add the unix communication socket to the epoll instance
@@ -542,26 +552,60 @@ int main(int argc, char *argv[]){
   int un_sock,un_sock_conn;
   char* un_sock_name;
   int signal_fd;
+  int debug;
+  int sock_name_ind;
+  int mip_start_ind;
   int i,j; /* indexes for loops */
 
   if(argc<3){
-    fprintf(stderr,"USAGE: %s [-h] <Socket_application> [MIP addresses ...]\n", argv[0]);
+    fprintf(stderr,"USAGE: %s [-h][-d] <Socket_application> [MIP addresses ...]\n", argv[0]);
     fprintf(stderr,"[-h]: optional help argument\n");
+    fprintf(stderr,"[-d]: optional debug argument, prints communication information\n");
     fprintf(stderr,"<Socket_application>: name of socket for IPC with application\n");
     fprintf(stderr,"[MIP addresses ...]: one unique MIP address per interface with a unique MAC address, in the form of a number between 0 and 255\n");
     exit(EXIT_FAILURE);
   }
+
+  if(strcmp(argv[1],"-h") == 0){
+      fprintf(stderr,"USAGE: %s [-h][-d] <Socket_application> [MIP addresses ...]\n", argv[0]);
+      fprintf(stderr,"[-h]: optional help argument\n");
+      fprintf(stderr,"[-d]: optional debug argument, prints communication information\n");
+      fprintf(stderr,"<Socket_application>: name of socket for IPC with application\n");
+      fprintf(stderr,"[MIP addresses ...]: one unique MIP address per interface with a unique MAC address, in the form of a number between 0 and 255\n");
+      exit(EXIT_SUCCESS);
+  }else if(strcmp(argv[1],"-d") == 0){
+    if (argc<4){
+      fprintf(stderr,"USAGE: %s [-h][-d] <Socket_application> [MIP addresses ...]\n", argv[0]);
+      fprintf(stderr,"[-h]: optional help argument\n");
+      fprintf(stderr,"[-d]: optional debug argument, prints communication information\n");
+      fprintf(stderr,"<Socket_application>: name of socket for IPC with application\n");
+      fprintf(stderr,"[MIP addresses ...]: one unique MIP address per interface with a unique MAC address, in the form of a number between 0 and 255\n");
+      exit(EXIT_SUCCESS);
+    }
+    fprintf(stdout,"--- Starting MIP daemon in debug mode ---\n\n");
+    debug = 1;
+    sock_name_ind = 2;
+    mip_start_ind = 3;
+  }else{
+    debug = 0;
+    sock_name_ind = 1;
+    mip_start_ind = 2;
+  }
+
   //The name of the socket used for host-communication
-  un_sock_name = argv[1];
+  un_sock_name = argv[sock_name_ind];
+
 
   //Make entries in for each supplied MIP address in a local MIP-MAC table
   int num_mip_addrs = argc-2;
+  if(debug) num_mip_addrs --;
   for(i=0;i<num_mip_addrs;i++){
     char *endptr;
-    long int check = strtol(argv[2+i],&endptr,10);
-    if(*endptr != '\0' || argv[2+i][0] == '\0' || check>255 || check < 0){
-      fprintf(stderr,"USAGE: %s [-h] <Socket_application> [MIP addresses ...]\n", argv[0]);
+    long int check = strtol(argv[mip_start_ind+i],&endptr,10);
+    if(*endptr != '\0' || argv[mip_start_ind+i][0] == '\0' || check>255 || check < 0){
+      fprintf(stderr,"USAGE: %s [-h][-d] <Socket_application> [MIP addresses ...]\n", argv[0]);
       fprintf(stderr,"[-h]: optional help argument\n");
+      fprintf(stderr,"[-d]: optional debug argument, prints communication information\n");
       fprintf(stderr,"<Socket_application>: name of socket for IPC with application\n");
       fprintf(stderr,"[MIP addresses ...]: one unique MIP address per interface with a unique MAC address, in the form of a number between 0 and 255\n");
       exit(EXIT_FAILURE);
@@ -569,8 +613,9 @@ int main(int argc, char *argv[]){
     local_mip_mac_table[i].mip_addr = check;
     for(j=0;j<i;j++){
       if(local_mip_mac_table[i].mip_addr==local_mip_mac_table[j].mip_addr){
-        fprintf(stderr,"USAGE: %s [-h] <Socket_application> [MIP addresses ...]\n", argv[0]);
+        fprintf(stderr,"USAGE: %s [-h][-d] <Socket_application> [MIP addresses ...]\n", argv[0]);
         fprintf(stderr,"[-h]: optional help argument\n");
+        fprintf(stderr,"[-d]: optional debug argument, prints communication information\n");
         fprintf(stderr,"<Socket_application>: name of socket for IPC with application\n");
         fprintf(stderr,"[MIP addresses ...]: one unique MIP address per interface with a unique MAC address, in the form of a number between 0 and 255\n");
         exit(EXIT_FAILURE);
@@ -578,6 +623,9 @@ int main(int argc, char *argv[]){
     }
   }
 
+  if(debug){
+    fprintf(stdout,"Binding unix socket to [%s]...\n",argv[sock_name_ind]);
+  }
   //Setup a unix socket for accepting application connections
   un_sock = setup_unix_socket(un_sock_name);
 
@@ -593,11 +641,15 @@ int main(int argc, char *argv[]){
     close_sockets(un_sock,un_sock_name,-1,-1,NULL,0);
     exit(EXIT_FAILURE);
   }
+  if(debug){
+    fprintf(stdout,"Finished binding unix socket.\n\n");
+  }
 
-  //TODO: Close the socket and unlink the path
 
-
-  num_eth_sds =  setup_eth_sockets(local_mip_mac_table,num_mip_addrs);
+  if(debug){
+    fprintf(stdout,"Setting up ethernet sockets and associating them with provided MIP addresses...\n");
+  }
+  num_eth_sds =  setup_eth_sockets(local_mip_mac_table,num_mip_addrs,debug);
 
   if(num_eth_sds == -1){
     //ERROR_HANDLING
@@ -617,26 +669,28 @@ int main(int argc, char *argv[]){
     close_sockets(un_sock,un_sock_name,-1,-1,NULL,0);
     exit(EXIT_FAILURE);
   }
-  //TODO: Close ethernet sockets
 
   //Check if the correct number of MIP addresses was supplied to the MIP daemon
   //on startup
   if(num_eth_sds > num_mip_addrs || num_mip_addrs > num_eth_sds){
     //Number of MIP addresses did not match number of ethernet sockets
-    fprintf(stderr,"USAGE: %s [-h] <Socket_application> [MIP addresses ...]\n", argv[0]);
-    fprintf(stderr,"[-h]: optional help argument\n");
-    fprintf(stderr,"<Socket_application>: name of socket for IPC with application\n");
-    fprintf(stderr,"[MIP addresses ...]: one unique MIP address per interface with a unique MAC address, in the form of a number between 0 and 255\n");
-    exit(EXIT_FAILURE);
+    fprintf(stderr,"Number of supplied MIP addresses did not match the number of interfaces requiring a MIP address...\n");
     fprintf(stderr,"Number of supplied MIP addresses: %d\n", num_mip_addrs);
     fprintf(stderr,"Number of interfaces which require MIP addresses: %d\n", num_eth_sds);
     close_sockets(un_sock,un_sock_name,-1,-1,local_mip_mac_table,num_mip_addrs > num_eth_sds ? num_eth_sds : num_mip_addrs);
     exit(EXIT_FAILURE);
   }
 
+  if(debug){
+    fprintf(stdout,"Finished setting up ethernet sockets.\n\n");
+  }
 
+
+
+  if(debug){
+    fprintf(stdout,"Creating epoll instance to manage sockets...\n\n");
+  }
   //Code concerning epoll is based on code from 'man 7 epoll' and plenumstime 3
-
   epfd = create_epoll_instance(un_sock,local_mip_mac_table,num_eth_sds);
 
   if (epfd == -1){
@@ -687,10 +741,23 @@ int main(int argc, char *argv[]){
 
   un_sock_conn = -1; //no connection when un_sock_conn is -1
 
+
+
+  if(debug){
+    fprintf(stdout,"Running MIP daemon...\n\n");
+  }
   struct epoll_event ep_ev = { 0 };
   //Poll the sockets for events using epoll
   for(;;){
-    //TODO: Handle signals
+
+
+    if(debug){
+      if(un_sock_conn == -1){
+        fprintf(stdout,"Waiting for connection from application...\n");
+      }else{
+        fprintf(stdout,"Waiting for incoming data to server...\n");
+      }
+    }
     nfds = epoll_wait(epfd,events,MAX_EVENTS,-1);
     if(nfds == -1){
       //ERROR_HANDLING
@@ -706,6 +773,10 @@ int main(int argc, char *argv[]){
       if(events[i].data.fd == signal_fd){
         struct signalfd_siginfo sig_info;
         ssize_t sig_size;
+
+        if(debug){
+          fprintf(stdout,"Received signal while waiting...\n");
+        }
 
         sig_size = read(events[i].data.fd,&sig_info,sizeof(struct signalfd_siginfo));
         if(sig_size == 0){
@@ -728,15 +799,21 @@ int main(int argc, char *argv[]){
       }
       //Incoming connection from an application
       else if(events[i].data.fd == un_sock){
+
+        if(debug){
+          fprintf(stdout,"Incoming connection from application...\n");
+        }
+
         struct sockaddr_un un_sock_conn_addr = { 0 };
         socklen_t size_un_sock_conn_addr = sizeof(un_sock_conn_addr);
-
-        //TODO: Refuse connection if a client is already connected
-        if (un_sock_conn != -1) continue;
 
         //Accept incoming connection from the application
         un_sock_conn = accept(un_sock,(struct sockaddr *)&un_sock_conn_addr,
         &size_un_sock_conn_addr);
+
+        if(debug){
+          fprintf(stdout,"Accepted connection %d.\n\n",un_sock_conn);
+        }
 
         //TODO: edge-triggered maybe??? why?
         //Only recelive one message from the application at a time
@@ -753,6 +830,10 @@ int main(int argc, char *argv[]){
 
       //Incoming data from client on local unix socket
       else if(events[i].data.fd == un_sock_conn){
+
+        if(debug){
+          fprintf(stdout,"Received communication from application...\n");
+        }
         char msg_buf[MAX_MSG_SIZE] = { 0 }; /* to hold zero terminated message */
         uint8_t dest_mip_addr;
 
@@ -766,9 +847,16 @@ int main(int argc, char *argv[]){
         iov[1].iov_len = sizeof(msg_buf);
 
         msg.msg_iov = iov;
-        msg.msg_iovlen = sizeof(iov);
+        msg.msg_iovlen = 2;
+
+        //un_sock_conn IS SET TO 0 FUCKING WHYYY?=??????
+        printf("%d\n",un_sock_conn);
 
         ssize_t ret = recvmsg(events[i].data.fd,&msg,0);
+        printf("%d\n",un_sock_conn);
+
+        //WHY THE HELL DO I NEED THIS?!?!?!
+        un_sock_conn = events[i].data.fd;
 
         if(ret == -1){
           //ERROR_HANDLING
@@ -778,6 +866,10 @@ int main(int argc, char *argv[]){
         }
         else if (ret == 0){
           //Application terminated connection
+
+          if(debug){
+            fprintf(stdout,"Application disconnected from MIP daemon.\n");
+          }
 
           //Remove the unix connected socket from the epoll instance
           if(epoll_ctl(epfd,EPOLL_CTL_DEL,events[i].data.fd,&events[i]) == -1){
@@ -792,7 +884,7 @@ int main(int argc, char *argv[]){
           un_sock_conn = -1;
 
           struct epoll_event ep_un_ev = { 0 };
-          ep_un_ev.events = EPOLLIN|EPOLLONESHOT;
+          ep_un_ev.events = EPOLLIN;
           ep_un_ev.data.fd = un_sock;
 
           //Rearm the unix socket listening for connections
@@ -802,8 +894,13 @@ int main(int argc, char *argv[]){
           break;
         }
 
-        fprintf(stderr,"%d\n%ld\n%s\n",dest_mip_addr,ret,msg_buf);
+        if(debug){
+          fprintf(stdout,"Communication was %ld bytes from client, to MIP address <%d>, with message: \n\"%s\"\n\n", ret,dest_mip_addr,msg_buf);
+        }
 
+        if(debug){
+          fprintf(stdout,"Attempting to send ping to MIP address <%d> with message \n\"%s\"\n\n",dest_mip_addr,msg_buf);
+        }
         //Attempt to send the ping message
         ret = send_mip_packet(mip_arp_table, local_mip_mac_table, dest_mip_addr, msg_buf, 0b100, 0);
 
@@ -814,21 +911,22 @@ int main(int argc, char *argv[]){
           exit(EXIT_FAILURE);
         }
         else if(ret == -2){
+
+          if(debug){
+            fprintf(stdout,"Message size exceeded specification limit, aborting send.\n");
+          }
           //Message too big
           fprintf(stderr,"message too big: The client attempted to send a ping message with a size that exceeds the specification limit");
           continue;
         }
         else if(ret == -3){
+
+          if(debug){
+            fprintf(stdout,"Could not find destination in the MIP-ARP table, sending out a MIP-ARP broadcast...\n");
+          }
           //Destination MIP address was not stored in the MIP-ARP table,
           //need to send an APR broadcast
           ret = send_mip_broadcast(epfd, mip_arp_table, num_eth_sds, local_mip_mac_table, dest_mip_addr);
-
-
-          /*
-          close_sockets(un_sock,un_sock_name,un_sock_conn,signal_fd,local_mip_mac_table,num_eth_sds);
-          fprintf(stderr,"WHAT HAPPENED\n");
-          exit(EXIT_FAILURE);
-          */
 
           if(ret == -1){
             perror("main: send_mip_broadcast: un_sock_conn: send ping broadcast");
@@ -842,6 +940,11 @@ int main(int argc, char *argv[]){
             epoll_ctl(epfd,EPOLL_CTL_MOD,un_sock_conn,&ep_ev);
             continue;
           }
+
+          if(debug){
+            fprintf(stdout,"Received a MIP-ARP response, attempting to send ping again...\n");
+          }
+
           ret = send_mip_packet(mip_arp_table, local_mip_mac_table, dest_mip_addr, msg_buf, 0b100, 0);
         }
 
@@ -853,6 +956,10 @@ int main(int argc, char *argv[]){
         char buf[MAX_MSG_SIZE];
         uint8_t src_mip;
         int tra;
+
+        if(debug){
+          fprintf(stdout,"Waiting for PONG response...\n");
+        }
 
         //Wait for PONG response
         for(;;){
@@ -871,12 +978,18 @@ int main(int argc, char *argv[]){
             exit(EXIT_FAILURE);
           } else if(ping_nfds == 0){
             //TODO: timeout
-            fprintf(stderr,"timeout: There was a timeout when waiting for a PONG response\n");
+            if(debug){
+              fprintf(stdout,"Timed out while waiting for PONG response, aborting.\n\n");
+            }
             epoll_ctl(epfd,EPOLL_CTL_MOD,un_sock_conn,&ep_ev);
             break;
           }
 
           for(j = 0; j < ping_nfds; j++){
+
+            if(debug){
+              fprintf(stdout,"Received communication...\n");
+            }
             //Receive MIP packet on the interface in the event and write its message to buf
             tra = recv_mip_packet(mip_arp_table, local_mip_mac_table, ping_events[j].data.fd,&src_mip, buf);
             if(tra == -1){
@@ -886,6 +999,10 @@ int main(int argc, char *argv[]){
               exit(EXIT_FAILURE);
             }else if(tra == -2){
               //Packet was not for this host, discard it
+
+              if(debug){
+                fprintf(stdout,"Received packet had a destination not matching this host, discarding it and continuing waiting...\n\n");
+              }
               continue;
             }
 
@@ -895,7 +1012,15 @@ int main(int argc, char *argv[]){
               if(strcmp(buf,"PONG") != 0){
                 //Packet was not the PONG response that was expected,
                 //discard the packet
+
+                if(debug){
+                  fprintf(stdout,"Received packet was not a PONG response, discarding it and continuing waiting...\n");
+                }
                 continue;
+              }
+
+              if(debug){
+                fprintf(stdout,"Communication was a PONG response! Forwarding to client...\n");
               }
 
               char msg_buf[IPC_PONG_RSP_SIZE] = { 0 }; /* to hold the PONG response */
@@ -919,11 +1044,19 @@ int main(int argc, char *argv[]){
               //Stop waiting for a PONG response next iteration
               pong = 1;
 
+              if(debug){
+                fprintf(stdout,"PONG response forwarded to client!\n\n");
+              }
+
               break;
             }
             //If the packet was an ARP broadcast message, not the APR response
             //that was expected
             else if(tra == 0b001){
+
+              if(debug){
+                fprintf(stdout,"Received communication was a MIP-ARP broadcast, responding and continuing waiting...\n");
+              }
               //Respond normally to the MIP address that sent the MIP broadcast
               ret = send_mip_packet(mip_arp_table, local_mip_mac_table, src_mip, NULL, 0b000, 0);
 
@@ -943,11 +1076,18 @@ int main(int argc, char *argv[]){
 
       //Incoming data on ethernet sockets
       else{
+        if(debug){
+          fprintf(stdout,"Received data on an ethernet socket...\n");
+        }
         int tra;
         char buf[MAX_MSG_SIZE];
         uint8_t src_mip;
 
+        fprintf(stdout,"%d\t%d\n",un_sock_conn,events[i].data.fd);
+
+
         tra = recv_mip_packet(mip_arp_table, local_mip_mac_table,events[i].data.fd,&src_mip,buf);
+        
 
         if(tra == -1){
           //ERROR_HANDLING
@@ -956,13 +1096,26 @@ int main(int argc, char *argv[]){
           exit(EXIT_FAILURE);
         } else if(tra == -2){
           //Packet was not for this host
+          if(debug){
+            fprintf(stdout,"Packet was not addressed to this host, discard packet and continue waiting...\n");
+          }
           continue;
         }
 
         //If the received packet was a ping message
         if(tra == 0b100){
           //If no server is connected, ignore the packet
-          if(un_sock_conn == -1) continue;
+          if(un_sock_conn == -1){
+            if(debug){
+              fprintf(stdout,"No server is connected, discard the packet and continue waiting...\n");
+            }
+            continue;
+          }
+
+
+          if(debug){
+            fprintf(stdout,"Packet was a ping message, attempt to forward its message to the connected server...\n");
+          }
 
           //Else, forward the message to the connected server
           //Set up the sending data structure
@@ -983,6 +1136,10 @@ int main(int argc, char *argv[]){
             exit(EXIT_FAILURE);
           }
 
+
+          if(debug){
+            fprintf(stdout,"Waiting for PONG response from connected server...\n");
+          }
 
           uint8_t pong_tra = 0b100;
           ssize_t ret; /* return value of send function */
@@ -1010,6 +1167,10 @@ int main(int argc, char *argv[]){
             exit(EXIT_FAILURE);
           }
 
+          if(debug){
+            fprintf(stdout,"Received PONG response from connected server, attempting to forward to the pinging host...\n");
+          }
+
           //Send a MIP packet with the PONG response to the pinging host
           ret = send_mip_packet(mip_arp_table, local_mip_mac_table, src_mip,pong_buf, pong_tra, 0);
 
@@ -1018,6 +1179,10 @@ int main(int argc, char *argv[]){
             perror("main: send_mip_packet: un_sock_conn send pong");
             close_sockets(un_sock,un_sock_name,un_sock_conn,signal_fd,local_mip_mac_table,num_eth_sds);
             exit(EXIT_FAILURE);
+          }
+
+          if(debug){
+            fprintf(stdout,"PONG response forwarded!\n\n");
           }
 
         } /* Received ping END */
