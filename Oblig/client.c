@@ -112,7 +112,7 @@ printf("%d\n%s\n",strlen(argv[2]),ping_msg);
     if(errno == EAGAIN || errno == EWOULDBLOCK){
       fprintf(stderr,"Ping timed out\n");
     }else perror("main: recvmsg: un_sock");
-    shutdown(un_sock,SHUT_RDWR);
+    //shutdown(un_sock,SHUT_RDWR);
     close(un_sock);
     exit(EXIT_FAILURE);
   }else if(ret == 0){
@@ -132,6 +132,8 @@ printf("%d\n%s\n",strlen(argv[2]),ping_msg);
   printf("Latency: %ld ms\n",latency_us/1000);
 
   close(un_sock);
+
+  exit(EXIT_SUCCESS);
 
 
 
