@@ -78,7 +78,7 @@ int main(int argc,char *argv[]){
   }
 
   struct msghdr ping_msghdr = {0};
-printf("%d\n%s\n",strlen(argv[2]),ping_msg);
+printf("%ld\n%s\n",strlen(argv[2]),ping_msg);
   struct iovec iov_ping[2];
 
   iov_ping[0].iov_base = &dest_mip;

@@ -46,7 +46,7 @@ int main(int argc, char* argv[]){
     close(un_sock);
     exit(EXIT_FAILURE);
   }
-  printf("HEI\n");
+  
   for(;;){
     char ping_msg[MAX_MSG_SIZE] = { 0 };
     char pong_msg[PONG_MSG_SIZE] = { 0 };
