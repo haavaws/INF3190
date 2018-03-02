@@ -9,22 +9,28 @@
 #include <errno.h>
 
 #define PONG_MSG_SIZE 5 /* size of a pong message */
-#define PONG_TIMEOUT_US 500000 /* timeout to wait for PONG message in microseconds */
+/* timeout to wait for PONG message in microseconds */
+#define PONG_TIMEOUT_US 500000
 
-//Based on code from plenumstime 3
+/* Based on code from group session
+* https://github.uio.no/persun/inf3190/tree/master/plenum3 */
+
+/* Client for pinging a user-specified MIP address with a user-specified
+* message through communicating over IPC with a MIP daemon using a
+* user-specified socket name */
 
 int main(int argc,char *argv[]){
-  char *un_sock_name;
+  int un_sock; /* Socket to use for IPC */
+  char *un_sock_name; /* Socket name to use for IPC */
+  uint8_t dest_mip;
   char *ping_msg;
   char pong_msg[PONG_MSG_SIZE];
-  int un_sock;
-  struct timeval ping_start,ping_end;
-  time_t latency_s;
-  suseconds_t latency_us;
+  struct timeval ping_start,ping_end; /* Start and end time of ping */
+  time_t latency_s; /* Latency in seconds */
+  suseconds_t latency_us; /* Latency in microseconds */
   int ret;
-  int dest_mip;
 
-  //Check arguments
+  /* Argument control */
   if(argc<4){
     if(argc>1){
       if(strcmp(argv[1],"[-h]")){
@@ -32,41 +38,49 @@ int main(int argc,char *argv[]){
         exit(EXIT_FAILURE);
       }
     }
-    fprintf(stderr,"USAGE: %s [-h] <destination_host> <message> <Socket_application>\n",argv[0]);
+    fprintf(stderr,"USAGE: %s [-h] <destination_host> <message> "
+        "<Socket_application>\n",argv[0]);
     fprintf(stderr,"[-h]: optional help argument\n");
     fprintf(stderr,"<destination_host>: MIP addresses of ping target\n");
     fprintf(stderr,"<message>: message to send along with ping\n");
-    fprintf(stderr,"<Socket_application>: name of socket for IPC with daemon\n");
+    fprintf(stderr,"<Socket_application>: name of socket for IPC with "
+        "daemon\n");
     exit(EXIT_FAILURE);
   }
 
+  /* Get the MIP address from the input arguments */
   char *endptr;
   ret = strtol(argv[1],&endptr,10);
   if(*endptr != '\0' || argv[1][0] == '\0' || ret > 255 || ret < 0){
-    fprintf(stderr,"USAGE: %s [-h] <Socket_application> [MIP addresses ...]\n", argv[0]);
+    fprintf(stderr,"USAGE: %s [-h] <Socket_application> [MIP addresses ...]\n",
+        argv[0]);
     fprintf(stderr,"[-h]: optional help argument\n");
-    fprintf(stderr,"<Socket_application>: name of socket for IPC with application\n");
-    fprintf(stderr,"[MIP addresses ...]: one unique MIP address per interface with a unique MAC address, in the form of a number between 0 and 255\n");
+    fprintf(stderr,"<Socket_application>: name of socket for IPC with "
+        "application\n");
+    fprintf(stderr,"[MIP addresses ...]: one unique MIP address per interface "
+        "with a unique MAC address, in the form of a number between 0 and "
+        "255\n");
     exit(EXIT_FAILURE);
   }else dest_mip = ret;
 
   ping_msg = argv[2];
   un_sock_name = argv[3];
 
-  //Close this
+  /* Using SOCK_SEQPACKET for a connection-oriented, sequence-preserving socket
+   * that preserves message boundaries */
   un_sock = socket(AF_UNIX,SOCK_SEQPACKET,0);
 
   if(un_sock == -1){
-    //ERROR_HANDLING
     perror("main: socket: un_sock");
     exit(EXIT_FAILURE);
   }
 
+  /* Set timeout for the socket */
   struct timeval timeout = { 0 };
   timeout.tv_sec = 1;
   setsockopt(un_sock,SOL_SOCKET,SO_RCVTIMEO,&timeout,sizeof(struct timeval));
 
-
+  /* Connect to the MIP daemon */
   struct sockaddr_un sockaddr;
   sockaddr.sun_family = AF_UNIX;
   strcpy(sockaddr.sun_path, un_sock_name);
@@ -77,6 +91,8 @@ int main(int argc,char *argv[]){
     exit(EXIT_FAILURE);
   }
 
+  /* Send the ping message and destination MIP address to the connected MIP
+  * daemon */
   struct msghdr ping_msghdr = {0};
   struct iovec iov_ping[2];
 
@@ -92,14 +108,16 @@ int main(int argc,char *argv[]){
   fprintf(stdout,"Pinging host [%d]\n",dest_mip);
   fprintf(stdout,"Message: \"%s\"\n",ping_msg);
 
+  /* Timestamp before sending ping */
   gettimeofday(&ping_start,NULL);
   if(sendmsg(un_sock,&ping_msghdr,0) == -1){
-    //ERROR_HANDLING
     perror("main: sendmsg: un_sock");
     close(un_sock);
     exit(EXIT_FAILURE);
   }
 
+  /* Wait for PONG response from pinged server through the connected MIP
+  * daemon */
   struct msghdr pong_msghdr = {0};
 
   struct iovec iov_pong[1];
@@ -112,20 +130,22 @@ int main(int argc,char *argv[]){
   ret = recvmsg(un_sock,&pong_msghdr,0);
   if(ret == -1){
     if(errno == EAGAIN || errno == EWOULDBLOCK){
+      /* Timeout */
       fprintf(stderr,"Ping timed out\n");
     }else perror("main: recvmsg: un_sock");
-    //shutdown(un_sock,SHUT_RDWR);
     close(un_sock);
     exit(EXIT_FAILURE);
   }else if(ret == 0){
-    fprintf(stderr,"MIP daemon performed a shutdown while waiting for PONG response\n");
+    fprintf(stderr,"MIP daemon performed a shutdown while waiting for PONG "
+        "response\n");
     close(un_sock);
     unlink(un_sock_name);
     exit(EXIT_FAILURE);
   }
+  /* Timestamp after receiving PONG response */
   gettimeofday(&ping_end,NULL);
 
-  //Calculate latency
+  /* Calculate latency in milliseconds */
   latency_s = ping_end.tv_sec - ping_start.tv_sec;
   if(latency_s > 0){
     latency_us = (1000000 - ping_start.tv_usec) + ping_end.tv_usec;
@@ -136,7 +156,4 @@ int main(int argc,char *argv[]){
   close(un_sock);
 
   exit(EXIT_SUCCESS);
-
-
-
 }

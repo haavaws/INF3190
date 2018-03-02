@@ -14,6 +14,13 @@
 
 /* Global variables and functions declared in mip_daemon.h */
 
+/* Daemon used for link layer network communication using the Mininet
+* Interconnection Protocol (MIP). Allows a client application to ping, through
+* this MIP daemon, a host directly connected to this MIP daemon over ethernet.
+* Also allows for a connected server application, through this daemon, to
+* receive a ping message over ethernet from a host connected directly to the
+* host running this MIP daemon. */
+
 int main(int argc, char *argv[]){
   /* MIP-ARP table and local interface MIP-ARP */
   struct mip_arp_entry mip_arp_table[MAX_ARP_SIZE] = { 0 };
