@@ -78,7 +78,6 @@ int main(int argc,char *argv[]){
   }
 
   struct msghdr ping_msghdr = {0};
-printf("%ld\n%s\n",strlen(argv[2]),ping_msg);
   struct iovec iov_ping[2];
 
   iov_ping[0].iov_base = &dest_mip;
@@ -89,6 +88,9 @@ printf("%ld\n%s\n",strlen(argv[2]),ping_msg);
 
   ping_msghdr.msg_iov = iov_ping;
   ping_msghdr.msg_iovlen = 2;
+
+  fprintf(stdout,"Pinging host [%d]\n",dest_mip);
+  fprintf(stdout,"Message: \"%s\"\n",ping_msg);
 
   gettimeofday(&ping_start,NULL);
   if(sendmsg(un_sock,&ping_msghdr,0) == -1){

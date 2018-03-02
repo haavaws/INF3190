@@ -12,7 +12,7 @@
 int main(int argc, char* argv[]){
   int un_sock;
   char *un_sock_name;
-  int ret;
+  ssize_t ret;
 
   if(argc < 2){
     fprintf(stderr,"USAGE: %s [-h] <Socket_application>\n",argv[0]);
@@ -46,7 +46,7 @@ int main(int argc, char* argv[]){
     close(un_sock);
     exit(EXIT_FAILURE);
   }
-  
+
   for(;;){
     char ping_msg[MAX_MSG_SIZE] = { 0 };
     char pong_msg[PONG_MSG_SIZE] = { 0 };
