@@ -1,6 +1,3 @@
-#ifndef DEBUG
-#define DEBUG
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <inttypes.h>
@@ -71,5 +68,3 @@ int print_arp_table(struct mip_arp_entry *arp_table){
 
   return num_entries;
 }
-
-#endif

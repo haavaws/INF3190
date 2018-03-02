@@ -1,5 +1,5 @@
-#ifndef CONSTANTS
-#define CONSTANTS
+#ifndef GLOBALVARS
+#define GLOBALVARS
 
 #include <inttypes.h>
 #include <time.h>
