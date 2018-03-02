@@ -10,6 +10,8 @@
 #include <sys/epoll.h>
 #include "mip_daemon.h"
 
+
+
 /**
  * Closes all sockets and unlinks the name bound to the listening unix socket
  *
@@ -35,13 +37,17 @@ void close_sockets(int un_sock, char* un_sock_name, int un_sock_conn,
   if(signal_fd != -1) close(signal_fd);
 }
 
+
+
 /**
- * Sets up a unix socket and binds it to the provided name
+ * Sets up a unix socket and binds it to the provided name, and listens to it
  *
  * @param un_sock_name Name to bind the unix socket to
  * @return             Returns the socket descriptor of the new unix socket on
  *                     success, -1 if socket() fails, -2 if bind() fails, -3 if
  *                     listen() fails
+ *
+ * Global variables: LISTEN_BACKLOG_UNIX
  */
 int setup_unix_socket(char* un_sock_name){
   /* Using SOCK_SEQPACKET for a connection-oriented, sequence-preserving socket
@@ -75,6 +81,8 @@ int setup_unix_socket(char* un_sock_name){
   return un_sock;
 } /* setup_unix_socket() END */
 
+
+
 /**
  * Sets up an ethernet socket for each network interface of type AF_PACKET,
  * and associates each with MIP by storing it in the provided MIP-ARP table
@@ -88,7 +96,12 @@ int setup_unix_socket(char* un_sock_name){
  *                            should be logged to the console, 1 indicating
  *                            yes, and 0 indicating no
  * @return                    Returns the number of network interfaces of type
- *                            AF_PACKET
+ *                            AF_PACKET, -1 if getifaddrs() fails, -2 if
+ *                            socket() fails, -3 if ioctl() fails, -4 if bind()
+ *                            fails
+ *
+ * Global variables: ETH_P_MIP
+ *                   MAC_SIZE
  */
 int setup_eth_sockets(struct mip_arp_entry *local_mip_mac_table,
     int num_mip_addrs, int debug){
@@ -153,7 +166,7 @@ int setup_eth_sockets(struct mip_arp_entry *local_mip_mac_table,
       struct ifreq dev;
       strcpy(dev.ifr_name, ifa->ifa_name);
       if(ioctl(eth_sd, SIOCGIFHWADDR, &dev) == -1){
-        //Close all sockets and free the interfaces struct
+        /* Close all sockets and free the interfaces struct */
         for(int i = 0; i < num_eth_sds; i++){
           close(local_mip_mac_table[i].socket);
         }
@@ -201,6 +214,8 @@ int setup_eth_sockets(struct mip_arp_entry *local_mip_mac_table,
   return num_eth_sds;
 } /* setup_eth_sockets END */
 
+
+
 /**
  * Creates an epoll instance and adds all sockets provided as arguments to the
  * instance
@@ -211,7 +226,9 @@ int setup_eth_sockets(struct mip_arp_entry *local_mip_mac_table,
  *                            network interfaces
  * @param num_eth_sds         Number of sockets stored in local_mip_mac_table
  * @return                    Returns the file descriptor for the created epoll
- *                            instance
+ *                            instance, -1 if epoll_create() fails, -2 if
+ *                            epoll_ctl() fails for the unix socket, and -3 if
+ *                            epoll_ctl() fails for an ethernet socket.
  */
 int create_epoll_instance(int un_sock,
     struct mip_arp_entry *local_mip_mac_table, int num_eth_sds){

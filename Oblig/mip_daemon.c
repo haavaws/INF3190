@@ -59,7 +59,7 @@ int main(int argc, char *argv[]){
   else if(strcmp(argv[1],"-d") == 0){
     if (argc<4){
       print_help(argv[0]);
-      exit(EXIT_SUCCESS);
+      exit(EXIT_FAILURE);
     }
     fprintf(stdout,"--- Starting MIP daemon in debug mode ---\n\n");
     debug = 1;
@@ -106,30 +106,15 @@ int main(int argc, char *argv[]){
     exit(EXIT_FAILURE);
   }
   else if (un_sock == -3){
-    perror("main: listen() un_sock");
+    perror("main: setup_unix_socket, listen() un_sock");
     close_sockets(un_sock, un_sock_name, -1, -1, NULL, 0);
     exit(EXIT_FAILURE);
   }
 
   num_eth_sds =  setup_eth_sockets(local_mip_mac_table, num_mip_addrs, debug);
 
-  if(num_eth_sds == -1){
-    perror("main: setup_eth_sockets: getifaddrs");
-    close_sockets(un_sock, un_sock_name, -1, -1, NULL, 0);
-    exit(EXIT_FAILURE);
-  }
-  else if(num_eth_sds == -2){
-    perror("main: setup_eth_sockets: socket");
-    close_sockets(un_sock, un_sock_name, -1, -1, NULL, 0);
-    exit(EXIT_FAILURE);
-  }
-  else if(num_eth_sds == -3){
-    perror("main: setup_eth_sockets: ioctl");
-    close_sockets(un_sock, un_sock_name, -1, -1, NULL, 0);
-    exit(EXIT_FAILURE);
-  }
-  else if(num_eth_sds == -4){
-    perror("main: setup_eth_sockets: bind");
+  if(num_eth_sds < 0){
+    perror("main: setup_eth_sockets");
     close_sockets(un_sock, un_sock_name, -1, -1, NULL, 0);
     exit(EXIT_FAILURE);
   }
@@ -150,21 +135,9 @@ int main(int argc, char *argv[]){
   /* Create an epoll instance with the unix and ethernet sockets */
   epfd = create_epoll_instance(un_sock, local_mip_mac_table, num_eth_sds);
 
-  if (epfd == -1){
+  if (epfd < 0){
     //ERROR_HANDLING
-    perror("main: create_epoll_instance(): epoll_create");
-    close_sockets(un_sock,un_sock_name,-1,-1,local_mip_mac_table,num_eth_sds);
-    exit(EXIT_FAILURE);
-  }
-  else if(epfd == -2){
-    //ERROR_HANDLING
-    perror("main: create_epoll_instance: epoll_ctl(): add un_sock");
-    close_sockets(un_sock,un_sock_name,-1,-1,local_mip_mac_table,num_eth_sds);
-    exit(EXIT_FAILURE);
-  }
-  else if(epfd == -3){
-    //ERROR_HANDLING
-    perror("main: epoll_ctl: add local_mip_mac_table[i].socket");
+    perror("main: create_epoll_instance():");
     close_sockets(un_sock,un_sock_name,-1,-1,local_mip_mac_table,num_eth_sds);
     exit(EXIT_FAILURE);
   }
@@ -180,7 +153,6 @@ int main(int argc, char *argv[]){
 
   signal_fd = signalfd(-1, &mask, 0);
   if(signal_fd == -1){
-    //ERROR_HANDLING
     perror("main: signalfd");
     close_sockets(un_sock, un_sock_name, -1, -1, local_mip_mac_table,
         num_eth_sds);
@@ -192,7 +164,6 @@ int main(int argc, char *argv[]){
   ep_sig_ev.data.fd = signal_fd;
 
   if(epoll_ctl(epfd, EPOLL_CTL_ADD, signal_fd, &ep_sig_ev) == -1){
-    //ERROR_HANDLING
     perror("main: epoll_ctl: add signal_fd");
     close_sockets(un_sock,un_sock_name, -1, signal_fd, local_mip_mac_table,
         num_eth_sds);
@@ -210,7 +181,6 @@ int main(int argc, char *argv[]){
 
     nfds = epoll_wait(epfd,events,MAX_EVENTS,-1);
     if(nfds == -1){
-      //ERROR_HANDLING
       perror("main: epoll_wait()");
       close_sockets(un_sock, un_sock_name, un_sock_conn, signal_fd,
           local_mip_mac_table, num_eth_sds);
@@ -270,7 +240,6 @@ int main(int argc, char *argv[]){
         ep_ev.data.fd = un_sock_conn;
 
         if(epoll_ctl(epfd, EPOLL_CTL_ADD, un_sock_conn, &ep_ev) == -1){
-          //ERROR_HANDLING
           perror("main: epoll_ctl(): add un_sock_conn");
           close_sockets(un_sock, un_sock_name, un_sock_conn, signal_fd,
               local_mip_mac_table, num_eth_sds);

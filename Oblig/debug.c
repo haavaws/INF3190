@@ -27,6 +27,8 @@ void print_help(char *file_name){
   exit(EXIT_FAILURE);
 }
 
+
+
 /**
  * Prints out the provided MAC address to console
  *
@@ -40,6 +42,8 @@ void print_mac(uint8_t *mac){
     fprintf(stdout,"%x:",mac[i]);
   }fprintf(stdout,"%x",mac[5]);
 }
+
+
 
 /**
  * Prints all unexpired entries of the MIP-ARP table provided

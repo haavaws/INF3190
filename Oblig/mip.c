@@ -6,6 +6,8 @@
 #include <stdlib.h>
 #include "mip_daemon.h"
 
+
+
 /**
  * Extracts TRA value from the provided MIP packet
  *
@@ -15,6 +17,8 @@
 uint8_t get_mip_tra(struct mip_frame *frame){
   return frame->header_bytes[0] >> 5;
 }
+
+
 
 /**
  * Extracts the destination MIP address from the provided MIP packet
@@ -29,6 +33,8 @@ uint8_t get_mip_dest(struct mip_frame *frame){
   return destination;
 }
 
+
+
 /**
  * Extracts the source MIP address from the provided MIP packet
  *
@@ -41,6 +47,8 @@ uint8_t get_mip_src(struct mip_frame *frame){
   source |= frame->header_bytes[2] >> 5;
   return source;
 }
+
+
 
 /**
  * Updates the MIP-ARP table provided with an entry for the provided MIP
@@ -105,6 +113,8 @@ int update_mip_arp (struct mip_arp_entry *arp_table, uint8_t mip,
   return ret;
 } /* update_mip_arp() END */
 
+
+
 /**
  * Constructs a MIP packet by bit shifiting the variables provided as arguments
  * into the header of the MIP packet provided, and copying the provided message
@@ -140,8 +150,10 @@ void construct_mip_packet(struct mip_frame* frame, uint8_t destination,
   memcpy(frame->payload,payload,msg_len);
 }
 
+
+
 /**
- * Construct a MIP packet using the provided arguments and send it to the MIP
+ * Constructs a MIP packet using the provided arguments and sends it to the MIP
  * address provided as destination
  *
  * @param arp_table           MIP-ARP table in which to lookup MIP addresses
@@ -155,7 +167,8 @@ void construct_mip_packet(struct mip_frame* frame, uint8_t destination,
  *                            the console
  * @return                    Returns amount of bytes sent on success, and -1
  *                            if send() fails, -2 if message was large, and -3
- *                            if MIP address didn't have an entry in arp_table
+ *                            if the destination MIP address didn't have an
+ *                            entry in the provided MIP-ARP table
  *
  * Global variables: MAX_MSG_SIZE
  *                   MAC_SIZE
@@ -242,10 +255,15 @@ ssize_t send_mip_packet(struct mip_arp_entry *arp_table,
   return ret;
 } /* send_mip_packet() END */
 
+
+
 /**
  * Receives a MIP packet on the socket provided, and copies its message to the
  * provided character buffer, and its source MIP address to the provided byte
- * buffer
+ * buffer. In addition it updates the provided MIP-ARP table with the
+ * information from the received packet, and responds if the received packet
+ * was a MIP-ARP broadcast intended for the network interface that received the
+ * packet.
  *
  * @param mip_arp_table       MIP-ARP table to update with the source MIP
  *                            address of the received MIP packet if necessary
@@ -258,6 +276,11 @@ ssize_t send_mip_packet(struct mip_arp_entry *arp_table,
  *                            the received packet
  * @param debug               Indicates if debug messages should be logged to
  *                            console
+ * @returns                   Returns the binary value of the TRA bits of the
+ *                            received packet on success, -1 if recv() fails,
+ *                            and -2 if the destination MIP address of the
+ *                            received packet did not match the MIP address of
+ *                            the network interface that received it
  *
  * Global variables: MAX_ETH_FRAME_SIZE
  *                   MAC_SIZE
@@ -317,7 +340,6 @@ int recv_mip_packet(struct mip_arp_entry *mip_arp_table,
     if(debug){
       fprintf(stdout,"Destination and host MIP do not match.\n");
     }
-
     return -2;
   }
 
@@ -337,9 +359,13 @@ int recv_mip_packet(struct mip_arp_entry *mip_arp_table,
   return mip_tra;
 } /* recv_mip_packet END */
 
+
+
 /**
  * Sends a MIP broadcast packet on all local network interfaces whose socket
- * descriptors are in the provided local MIP-ARP table, and waits for response
+ * descriptors are in the provided local MIP-ARP table, waits for response and
+ * updates the provided MIP-ARP table with information from all packets
+ * received while waiting for the MIP-ARP response.
  *
  * @param epoll_fd            Descriptor for the epoll instance which handles
  *                            events for the sockets to broadcast on
