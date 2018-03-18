@@ -1,6 +1,6 @@
 all: mip_daemon client server
 
-mip_daemon: mip_daemon.c
+mip_daemon: mip.c sockets.c debug.c mip_daemon.c
 	gcc -std=gnu99 mip.c sockets.c debug.c mip_daemon.c -o mip_daemon
 
 client: client.c
