@@ -25,16 +25,35 @@
  * @param num_eth_sds         Number of sockets stored in local_mip_mac_table
  * @return                    none
  */
-void close_sockets(int un_sock, char* un_sock_name, int un_sock_conn,
-    int signal_fd, struct mip_arp_entry *local_mip_mac_table, int num_eth_sds){
+void close_sockets(struct sockets sock_container){
   int i;
-  for (i = 0; i < num_eth_sds; i++){
-    close(local_mip_mac_table[i].socket);
+  for (i = 0; i < *sock_container.num_eth_sds; i++){
+    close(sock_container.local_mip_mac_table[i].socket);
   }
-  close(un_sock);
-  unlink(un_sock_name);
-  if(un_sock_conn != -1) close(un_sock_conn);
-  if(signal_fd != -1) close(signal_fd);
+  struct sockaddr_un un_addr = { 0 };
+  socklen_t addrlen = sizeof(un_addr);
+  getsockname(*sock_container.un_sock, (struct sockaddr*) &un_addr, &addrlen);
+  close(*sock_container.un_sock);
+  unlink(un_addr.sun_path);
+
+  struct sockaddr_un un_route_addr = { 0 };
+  socklen_t route_addrlen = sizeof(un_route_addr);
+  getsockname(*sock_container.un_route_sock, (struct sockaddr*) &un_route_addr,
+    &route_addrlen);
+  close(*sock_container.un_route_sock);
+  unlink(un_route_addr.sun_path);
+
+  struct sockaddr_un un_fwd_addr = { 0 };
+  socklen_t fwd_addrlen = sizeof(un_fwd_addr);
+  getsockname(*sock_container.un_fwd_sock, (struct sockaddr*) &un_fwd_addr,
+    &fwd_addrlen);
+  close(*sock_container.un_fwd_sock);
+  unlink(un_fwd_addr.sun_path);
+
+  close(*sock_container.un_sock_conn);
+  close(*sock_container.un_route_conn);
+  close(*sock_container.un_fwd_conn);
+  close(*sock_container.signal_fd);
 }
 
 
@@ -230,8 +249,9 @@ int setup_eth_sockets(struct mip_arp_entry *local_mip_mac_table,
  *                            epoll_ctl() fails for the unix socket, and -3 if
  *                            epoll_ctl() fails for an ethernet socket.
  */
-int create_epoll_instance(int un_sock,
-    struct mip_arp_entry *local_mip_mac_table, int num_eth_sds){
+int create_epoll_instance(/*int un_sock,
+    struct mip_arp_entry *local_mip_mac_table, int num_eth_sds*/
+  struct sockets sock_container){
 
   /* Code concerning epoll is based on code from 'man 7 epoll' and group
   * session https://github.uio.no/persun/inf3190/blob/master/plenum3/epoll.c */
@@ -250,20 +270,38 @@ int create_epoll_instance(int un_sock,
   * from an application is only triggered in the main loop of the MIP daemon */
   struct epoll_event ep_un_ev = { 0 };
   ep_un_ev.events = EPOLLIN | EPOLLONESHOT;
-  ep_un_ev.data.fd = un_sock;
+  ep_un_ev.data.fd = *sock_container.un_sock;
 
-  if(epoll_ctl(epfd, EPOLL_CTL_ADD, un_sock, &ep_un_ev) == -1){
+  if(epoll_ctl(epfd, EPOLL_CTL_ADD, *sock_container.un_sock, &ep_un_ev) == -1){
+    return -2;
+  }
+
+  struct epoll_event ep_route_ev = { 0 };
+  ep_route_ev.events = EPOLLIN | EPOLLONESHOT;
+  ep_route_ev.data.fd = *sock_container.un_route_sock;
+
+  if(epoll_ctl(epfd, EPOLL_CTL_ADD, *sock_container.un_route_sock,
+      &ep_route_ev) == -1){
+    return -2;
+  }
+
+  struct epoll_event ep_fwd_ev = { 0 };
+  ep_fwd_ev.events = EPOLLIN | EPOLLONESHOT;
+  ep_fwd_ev.data.fd = *sock_container.un_fwd_sock;
+
+  if(epoll_ctl(epfd, EPOLL_CTL_ADD, *sock_container.un_fwd_sock, &ep_fwd_ev)
+      == -1){
     return -2;
   }
 
   /* Add the ethernet sockets to the epoll instance */
-  for(i=0;i<num_eth_sds;i++){
+  for(i=0;i<*sock_container.num_eth_sds;i++){
     struct epoll_event ep_eth_ev = { 0 };
     ep_eth_ev.events = EPOLLIN;
-    ep_eth_ev.data.fd = local_mip_mac_table[i].socket;
+    ep_eth_ev.data.fd = sock_container.local_mip_mac_table[i].socket;
 
-    if(epoll_ctl(epfd, EPOLL_CTL_ADD, local_mip_mac_table[i].socket,&ep_eth_ev)
-        == -1 ){
+    if(epoll_ctl(epfd, EPOLL_CTL_ADD,
+        sock_container.local_mip_mac_table[i].socket, &ep_eth_ev) == -1 ){
       return -3;
     }
 
