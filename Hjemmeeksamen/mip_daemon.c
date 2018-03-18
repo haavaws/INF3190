@@ -14,7 +14,7 @@
 
 /* Global variables and functions declared in mip_daemon.h */
 
-/* Daemon used for link layer network communication using the Mininet
+/* Daemon used for network layer communication using the Mininet
 * Interconnection Protocol (MIP). Allows a client application to ping, through
 * this MIP daemon, a host directly connected to this MIP daemon over ethernet.
 * Also allows for a connected server application, through this daemon, to
@@ -22,6 +22,9 @@
 * host running this MIP daemon. */
 
 int main(int argc, char *argv[]){
+  /* Variable container */
+  struct sockets sock_container = { 0 };
+
   /* MIP-ARP table and local interface MIP-ARP */
   struct mip_arp_entry mip_arp_table[MAX_ARP_SIZE] = { 0 };
   struct mip_arp_entry local_mip_mac_table[MAX_ARP_SIZE] = { 0 };
@@ -31,23 +34,50 @@ int main(int argc, char *argv[]){
   int epfd,nfds;
 
   /* Sockets */
-  int num_eth_sds;
-  int un_sock,un_sock_conn;
-  int signal_fd;
+  int num_eth_sds = 0;
+  int un_sock = -1;
+  int un_route_sock = -1;
+  int un_fwd_sock = -1;
+
+  /* Connected sockets, from application and router */
+  /* -1 indicates no connection */
+  int un_sock_conn = -1;
+  int un_route_conn = -1;
+  int un_fwd_conn = -1;
+
+  int signal_fd = -1;
 
   /* Arguments */
   int debug;
   char* un_sock_name;
+  char* un_route_name;
+  char* un_fwd_name;
   int mip_start_ind;
   int sock_name_ind;
+  int route_name_ind;
+  int fwd_name_ind;
+  /*int num_ifs_ind;
+  int num_ifs;*/
 
-  /* Loops and return */
+  /* Extra */
   int i,j;
+  /*void* ptr;*/
   ssize_t ret;
+
+  /* Add all sockets to the socket container */
+  sock_container.un_sock = &un_sock;
+  sock_container.un_route_sock = &un_route_sock;
+  sock_container.un_fwd_sock = &un_fwd_sock;
+  sock_container.un_sock_conn = &un_sock_conn;
+  sock_container.un_route_conn = &un_route_conn;
+  sock_container.un_fwd_conn = &un_fwd_conn;
+  sock_container.signal_fd = &signal_fd;
+  sock_container.local_mip_mac_table = local_mip_mac_table;
+  sock_container.num_eth_sds = &num_eth_sds;
 
 
   /* Argument control */
-  if(argc<3){
+  if(argc<6){
     print_help(argv[0]);
     exit(EXIT_FAILURE);
   }
@@ -64,19 +94,45 @@ int main(int argc, char *argv[]){
     fprintf(stdout,"--- Starting MIP daemon in debug mode ---\n\n");
     debug = 1;
     sock_name_ind = 2;
-    mip_start_ind = 3;
+    route_name_ind = 3;
+    fwd_name_ind = 4;
+    /*num_ifs_ind = 5;*/
+    mip_start_ind = 6;
+
   }
   else{
     debug = 0;
     sock_name_ind = 1;
-    mip_start_ind = 2;
+    route_name_ind = 2;
+    fwd_name_ind = 3;
+    /*num_ifs_ind = 4;*/
+    mip_start_ind = 5;
   }
 
+
+
   un_sock_name = argv[sock_name_ind]; /* <Socket_application */
+  un_route_name = argv[route_name_ind]; /* <Socket_route> */
+  un_fwd_name = argv[fwd_name_ind]; /* <Socket_forwarding> */
+
+  /* Number of interfaces */
+  /*num_ifs = strtol(argv[num_ifs_ind],(char**)&ptr,10);*/
+
+  /* Control that num_ifs was a number */
+  /*if( ((char*)ptr) [0] !=  0){
+    print_help(argv[0]);
+    exit(EXIT_FAILURE);
+  }*/
 
   /* Store MIP addresses in the MIP-ARP for local interfaces */
-  int num_mip_addrs = argc-2;
+  int num_mip_addrs = argc-5;
   if(debug) num_mip_addrs --;
+
+  /*if(num_mip_addrs != num_ifs) {
+    print_help(argv[0]);
+    exit(EXIT_FAILURE);
+  }*/
+
   for(i = 0; i < num_mip_addrs; i++){
     char *endptr;
     long int check = strtol(argv[mip_start_ind+i],&endptr,10);
@@ -94,51 +150,54 @@ int main(int argc, char *argv[]){
     }
   }
 
+  /* Setup the unix IPC sockets */
   un_sock = setup_unix_socket(un_sock_name);
+  un_route_sock = setup_unix_socket(un_route_name);
+  un_fwd_sock = setup_unix_socket(un_fwd_name);
 
-  if(un_sock == -1){
+
+  if(un_sock == -1 || un_route_sock == -1 || un_fwd_sock == -1){
     perror("main: setup_unix_socket, socket() un_sock");
     exit(EXIT_FAILURE);
   }
-  else if (un_sock == -2){
+  else if (un_sock == -2|| un_route_sock == -2 || un_fwd_sock == -2){
     perror("main: setup_unix_socket, bind un_sock");
-    close_sockets(un_sock, NULL, -1, -1, NULL, 0);
+    close_sockets(sock_container);
     exit(EXIT_FAILURE);
   }
-  else if (un_sock == -3){
+  else if (un_sock == -3|| un_route_sock == -3 || un_fwd_sock == -3){
     perror("main: setup_unix_socket, listen() un_sock");
-    close_sockets(un_sock, un_sock_name, -1, -1, NULL, 0);
+    close_sockets(sock_container);
     exit(EXIT_FAILURE);
   }
 
-  num_eth_sds =  setup_eth_sockets(local_mip_mac_table, num_mip_addrs, debug);
+  /* Setup the raw ethernet sockets */
+  num_eth_sds = setup_eth_sockets(local_mip_mac_table, num_mip_addrs, debug);
 
   if(num_eth_sds < 0){
     perror("main: setup_eth_sockets");
-    close_sockets(un_sock, un_sock_name, -1, -1, NULL, 0);
+    close_sockets(sock_container);
     exit(EXIT_FAILURE);
   }
 
   /* Control number of supplied MIP addresses vs. number of raw interfaces */
   if(num_eth_sds > num_mip_addrs || num_mip_addrs > num_eth_sds){
-    //Number of MIP addresses did not match number of ethernet sockets
+    /* Number of MIP addresses did not match number of ethernet sockets */
     fprintf(stderr,"Number of supplied MIP addresses did not match the number "
         "of interfaces requiring a MIP address...\n");
     fprintf(stderr,"Number of supplied MIP addresses: %d\n", num_mip_addrs);
     fprintf(stderr,"Number of interfaces which require MIP addresses: %d\n",
         num_eth_sds);
-    close_sockets(un_sock,un_sock_name, -1, -1, local_mip_mac_table,
-        num_mip_addrs > num_eth_sds ? num_eth_sds : num_mip_addrs);
+    close_sockets(sock_container);
     exit(EXIT_FAILURE);
   }
 
   /* Create an epoll instance with the unix and ethernet sockets */
-  epfd = create_epoll_instance(un_sock, local_mip_mac_table, num_eth_sds);
+  epfd = create_epoll_instance(sock_container);
 
   if (epfd < 0){
-    //ERROR_HANDLING
     perror("main: create_epoll_instance():");
-    close_sockets(un_sock,un_sock_name,-1,-1,local_mip_mac_table,num_eth_sds);
+    close_sockets(sock_container);
     exit(EXIT_FAILURE);
   }
 
@@ -154,8 +213,7 @@ int main(int argc, char *argv[]){
   signal_fd = signalfd(-1, &mask, 0);
   if(signal_fd == -1){
     perror("main: signalfd");
-    close_sockets(un_sock, un_sock_name, -1, -1, local_mip_mac_table,
-        num_eth_sds);
+    close_sockets(sock_container);
     exit(EXIT_FAILURE);
   }
 
@@ -165,16 +223,14 @@ int main(int argc, char *argv[]){
 
   if(epoll_ctl(epfd, EPOLL_CTL_ADD, signal_fd, &ep_sig_ev) == -1){
     perror("main: epoll_ctl: add signal_fd");
-    close_sockets(un_sock,un_sock_name, -1, signal_fd, local_mip_mac_table,
-        num_eth_sds);
+    close_sockets(sock_container);
     exit(EXIT_FAILURE);
   }
 
 
-  /* While un_sock_conn is -1, no application is connected to the MIP daemon */
-  un_sock_conn = -1;
-
-  struct epoll_event ep_ev = { 0 };
+  struct epoll_event ep_un_ev = { 0 };
+  struct epoll_event ep_route_ev = { 0 };
+  struct epoll_event ep_fwd_ev = { 0 };
 
   /* Poll the sockets for events until a keyboard interrupt is signaled */
   for(;;){
@@ -182,8 +238,7 @@ int main(int argc, char *argv[]){
     nfds = epoll_wait(epfd,events,MAX_EVENTS,-1);
     if(nfds == -1){
       perror("main: epoll_wait()");
-      close_sockets(un_sock, un_sock_name, un_sock_conn, signal_fd,
-          local_mip_mac_table, num_eth_sds);
+      close_sockets(sock_container);
       exit(EXIT_FAILURE);
     }
 
@@ -199,27 +254,25 @@ int main(int argc, char *argv[]){
             sizeof(struct signalfd_siginfo));
         if(sig_size == 0){
           perror("\nCtrl-d: Received EOF signal from keyboard, stopping\n");
-          close_sockets(un_sock, un_sock_name, un_sock_conn, signal_fd,
-              local_mip_mac_table, num_eth_sds);
+          close_sockets(sock_container);
           exit(EXIT_SUCCESS);
         }
         if(sig_info.ssi_signo == SIGINT){
-          //Close all sockets and close stop the daemon
+          /* Close all sockets and close stop the daemon */
           fprintf(stderr,"\nCtrl-c: Received interrupt from keyboard,"
               "stopping daemon\n");
-          close_sockets(un_sock, un_sock_name, un_sock_conn, signal_fd,
-              local_mip_mac_table, num_eth_sds);
+          close_sockets(sock_container);
           exit(EXIT_SUCCESS);
         }
         else if(sig_info.ssi_signo == SIGQUIT){
-          //Close all sockets and close stop the daemon
+          /* Close all sockets and close stop the daemon */
           fprintf(stderr,"\nCtrl-\\: Received interrupt from keyboard,"
               "stopping daemon\n");
-          close_sockets(un_sock, un_sock_name, un_sock_conn, signal_fd,
-              local_mip_mac_table, num_eth_sds);
+          close_sockets(sock_container);
           exit(EXIT_SUCCESS);
         }
-      }
+      }/* Keyboard signal END */
+
       /* An application has connected to the MIP daemon */
       else if(events[i].data.fd == un_sock){
 
@@ -236,18 +289,84 @@ int main(int argc, char *argv[]){
 
         /* Using EPOLLONESHOT to make sure the socket may only be triggered
         * in the main loop of the MIP daemon */
-        ep_ev.events = EPOLLIN | EPOLLONESHOT;
-        ep_ev.data.fd = un_sock_conn;
+        ep_un_ev.events = EPOLLIN | EPOLLONESHOT;
+        ep_un_ev.data.fd = un_sock_conn;
 
-        if(epoll_ctl(epfd, EPOLL_CTL_ADD, un_sock_conn, &ep_ev) == -1){
+        if(epoll_ctl(epfd, EPOLL_CTL_ADD, un_sock_conn, &ep_un_ev) == -1){
           perror("main: epoll_ctl(): add un_sock_conn");
-          close_sockets(un_sock, un_sock_name, un_sock_conn, signal_fd,
-              local_mip_mac_table, num_eth_sds);
+          close_sockets(sock_container);
           exit(EXIT_FAILURE);
         }
       } /* Incoming application connection END */
 
-      /* Incoming data on the over IPC from connected application */
+      /* A router has connected to the MIP daemon, on the routing socket */
+      else if(events[i].data.fd == un_route_sock){
+
+        struct sockaddr_un un_route_conn_addr = { 0 };
+        socklen_t size_un_route_conn_addr = sizeof(un_route_conn_addr);
+
+        /* Store the routing socket for the connected routing daemon for later
+        * use */
+        un_route_conn = accept(un_route_sock,
+            (struct sockaddr *) &un_route_conn_addr, &size_un_route_conn_addr);
+
+        if(debug){
+          fprintf(stdout,"Connection to application established.\n\n");
+        }
+
+        /* Using EPOLLONESHOT to make sure the socket may only be triggered
+        * in the main loop of the MIP daemon */
+        ep_route_ev.events = EPOLLIN | EPOLLONESHOT;
+        ep_route_ev.data.fd = un_route_conn;
+
+        if(epoll_ctl(epfd, EPOLL_CTL_ADD, un_route_conn, &ep_route_ev) == -1){
+          perror("main: epoll_ctl(): add un_route_conn");
+          close_sockets(sock_container);
+          exit(EXIT_FAILURE);
+        }
+        /* Send current MIP-ARP cache to the router to let it initialize */
+      } /* Incoming routing connection END */
+
+      /* A router has connected to the MIP daemon, on the forwarding socket */
+      else if(events[i].data.fd == un_fwd_sock){
+
+        struct sockaddr_un un_fwd_conn_addr = { 0 };
+        socklen_t size_un_fwd_conn_addr = sizeof(un_fwd_conn_addr);
+
+        /* Store the forwarding socket for the connected routing daemon for
+        * later use */
+        un_fwd_conn = accept(un_fwd_sock,
+          (struct sockaddr *) &un_fwd_conn_addr, &size_un_fwd_conn_addr);
+
+        if(debug){
+          fprintf(stdout,"Connection to application established.\n\n");
+        }
+
+        /* Using EPOLLONESHOT to make sure the socket may only be triggered
+        * in the main loop of the MIP daemon */
+        ep_fwd_ev.events = EPOLLIN | EPOLLONESHOT;
+        ep_fwd_ev.data.fd = un_fwd_conn;
+
+        if(epoll_ctl(epfd, EPOLL_CTL_ADD, un_fwd_conn, &ep_fwd_ev) == -1){
+          perror("main: epoll_ctl(): add un_sock_conn");
+          close_sockets(sock_container);
+          exit(EXIT_FAILURE);
+        }
+      } /* Incoming forwarding connection END */
+
+      /* Incoming data over IPC from the routing daemon on the routing
+      * socket */
+      else if(events[i].data.fd == un_route_conn){
+
+      }/* Incoming routing data END */
+
+      /* Incoming data over IPC from the routing daemon on the forwarding
+      * socket */
+      else if(events[i].data.fd == un_fwd_conn){
+
+      }/* Incoming forwarding data END */
+
+      /* Incoming data over IPC from connected application */
       else if(events[i].data.fd == un_sock_conn){
 
         /* Unix communication based on code from group session
@@ -273,8 +392,7 @@ int main(int argc, char *argv[]){
 
         if(ret == -1){
           perror("main: recvmsg: un_sock_conn");
-          close_sockets(un_sock, un_sock_name, un_sock_conn, signal_fd,
-              local_mip_mac_table, num_eth_sds);
+          close_sockets(sock_container);
           exit(EXIT_FAILURE);
         }
         /* Application has terminated the connection to the MIP daemon */
@@ -287,8 +405,7 @@ int main(int argc, char *argv[]){
           /* Remove the connected unix socket from the epoll instance */
           if(epoll_ctl(epfd,EPOLL_CTL_DEL,events[i].data.fd,&events[i]) == -1){
             perror("main: epoll_ctl: del un_sock_conn");
-            close_sockets(un_sock, un_sock_name, un_sock_conn, signal_fd,
-                local_mip_mac_table,num_eth_sds);
+            close_sockets(sock_container);
             exit(EXIT_FAILURE);
           }
 
@@ -322,8 +439,7 @@ int main(int argc, char *argv[]){
 
         if(ret == -1){
           perror("main: send_mip_packet: un_sock_conn: send ping");
-          close_sockets(un_sock, un_sock_name, un_sock_conn, signal_fd,
-              local_mip_mac_table, num_eth_sds);
+          close_sockets(sock_container);
           exit(EXIT_FAILURE);
         }
         /* The ping message was too large */
@@ -349,14 +465,13 @@ int main(int argc, char *argv[]){
           if(ret == -1){
             perror("main: send_mip_broadcast: un_sock_conn: "
                 "send ping broadcast");
-            close_sockets(un_sock, un_sock_name, un_sock_conn, signal_fd,
-                local_mip_mac_table, num_eth_sds);
+            close_sockets(sock_container);
             exit(EXIT_FAILURE);
           }
           /* The broadcast timed out */
           else if(ret == -2){
             /* Rearm the socket for communicating over IPC */
-            epoll_ctl(epfd,EPOLL_CTL_MOD,un_sock_conn,&ep_ev);
+            epoll_ctl(epfd,EPOLL_CTL_MOD,un_sock_conn,&ep_un_ev);
             continue;
           }
 
@@ -380,7 +495,7 @@ int main(int argc, char *argv[]){
 
           if(pong == 1){
             /* Rearm the socket for communicating over IPC */
-            epoll_ctl(epfd, EPOLL_CTL_MOD, un_sock_conn, &ep_ev);
+            epoll_ctl(epfd, EPOLL_CTL_MOD, un_sock_conn, &ep_un_ev);
             break;
           }
 
@@ -388,8 +503,7 @@ int main(int argc, char *argv[]){
 
           if(ping_nfds == -1){
             perror("main: epoll_wait: un_sock_conn: PONG response");
-            close_sockets(un_sock, un_sock_name, un_sock_conn, signal_fd,
-                local_mip_mac_table, num_eth_sds);
+            close_sockets(sock_container);
             exit(EXIT_FAILURE);
           }
           /* Waiting timed out */
@@ -398,7 +512,7 @@ int main(int argc, char *argv[]){
               fprintf(stdout,"Timeout.\n");
             }
             /* Rearm the socket for communicating over IPC */
-            epoll_ctl(epfd, EPOLL_CTL_MOD, un_sock_conn, &ep_ev);
+            epoll_ctl(epfd, EPOLL_CTL_MOD, un_sock_conn, &ep_un_ev);
             break;
           }
 
@@ -415,8 +529,7 @@ int main(int argc, char *argv[]){
 
             if(tra == -1){
               perror("main: recv: un_sock_conn: PONG response");
-              close_sockets(un_sock, un_sock_name, un_sock_conn, signal_fd,
-                  local_mip_mac_table, num_eth_sds);
+              close_sockets(sock_container);
               exit(EXIT_FAILURE);
             }else if(tra == -2){
               /* MIP packet was not for this host, discard it */
@@ -462,8 +575,7 @@ int main(int argc, char *argv[]){
                   }
                 }else{
                   perror("main: sendmsg: un_sock_conn: PONG response");
-                  close_sockets(un_sock, un_sock_name, un_sock_conn, signal_fd,
-                      local_mip_mac_table, num_eth_sds);
+                  close_sockets(sock_container);
                   exit(EXIT_FAILURE);
                 }
               }
@@ -496,8 +608,7 @@ int main(int argc, char *argv[]){
 
         if(tra == -1){
           perror("main: recv: eth socket");
-          close_sockets(un_sock, un_sock_name, un_sock_conn, signal_fd,
-              local_mip_mac_table, num_eth_sds);
+          close_sockets(sock_container);
           exit(EXIT_FAILURE);
         }
         /* The received packet was not for this host */
@@ -541,8 +652,7 @@ int main(int argc, char *argv[]){
 
           if(ret == -1){
             perror("main: sendmsg: un_sock_conn receive ping");
-            close_sockets(un_sock, un_sock_name, un_sock_conn, signal_fd,
-                local_mip_mac_table, num_eth_sds);
+            close_sockets(sock_container);
             exit(EXIT_FAILURE);
           }
 
@@ -570,8 +680,7 @@ int main(int argc, char *argv[]){
 
           if(ret == -1){
             perror("main: recvmsg: un_sock_conn send pong");
-            close_sockets(un_sock, un_sock_name, un_sock_conn, signal_fd,
-                local_mip_mac_table, num_eth_sds);
+            close_sockets(sock_container);
             exit(EXIT_FAILURE);
           }
 
@@ -588,8 +697,7 @@ int main(int argc, char *argv[]){
 
           if(ret == -1){
             perror("main: send_mip_packet: un_sock_conn send pong");
-            close_sockets(un_sock, un_sock_name, un_sock_conn, signal_fd,
-                local_mip_mac_table, num_eth_sds);
+            close_sockets(sock_container);
             exit(EXIT_FAILURE);
           }
 
