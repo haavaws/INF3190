@@ -18,6 +18,7 @@
 #define MAC_SIZE 6 /* size of a mac address */
 #define IPC_PONG_RSP_SIZE 5 /* message size of an IPC PONG response */
 
+
 /* Entries to make up a MIP-ARP table */
 struct mip_arp_entry {
   uint8_t mip_addr; /* MIP address of the host */
@@ -44,6 +45,18 @@ struct ethernet_frame {
   struct mip_frame payload; /* A MIP packet as a payload */
 } __attribute__((packed));
 
+struct sockets {
+  int *un_sock;
+  int *un_route_sock;
+  int *un_fwd_sock;
+  int *un_sock_conn;
+  int *un_route_conn;
+  int *un_fwd_conn;
+  int *signal_fd;
+  struct mip_arp_entry *local_mip_mac_table;
+  int *num_eth_sds;
+};
+
 /* Functions are documented where they are defined */
 
 /* Defined in debug.c */
@@ -55,16 +68,14 @@ int print_arp_table(struct mip_arp_entry *arp_table);
 
 
 /* Defined in sockets.c */
-void close_sockets(int un_sock, char* un_sock_name, int un_sock_conn,
-  int signal_fd, struct mip_arp_entry *local_mip_mac_table, int num_eth_sds);
+void close_sockets(struct sockets sock_container);
 
 int setup_unix_socket(char* un_sock_name);
 
 int setup_eth_sockets(struct mip_arp_entry *local_mip_mac_table,
   int num_mip_addrs, int debug);
 
-int create_epoll_instance(int un_sock,
-  struct mip_arp_entry *local_mip_mac_table, int num_eth_sds);
+int create_epoll_instance(struct sockets sock_container);
 
 
 /* Defined in mip.c */
