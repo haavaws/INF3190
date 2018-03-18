@@ -190,10 +190,10 @@ ssize_t send_mip_packet(struct mip_arp_entry *arp_table,
 
   /* MIP-ARP broadcast and broadcast responses have no payload */
   if(tra == 0b000 || tra == 0b001) msg_len = 0;
-  else{
+  else if (tra == 0b100) {
     /* Message length plus padding */
     msg_len = strlen(payload)+1;
-    msg_len += msg_len % 4;
+    if(msg_len % 4 != 0) msg_len += 4 - (msg_len % 4);
   }
 
   /* If the message is to large */
