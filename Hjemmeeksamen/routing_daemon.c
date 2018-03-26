@@ -11,15 +11,21 @@
 
 #include "routing_daemon.h"
 
-int init_distance_table(int un_route_sock, struct distance_table_entry
-    *distance_table, struct routing_table_entry *routing_table){
+int init_routing_table(int un_route_sock, struct routing_table_entry *routing_table,uint8_t *local_mips){
 
-  char *local_mips = (char *) malloc(MAX_MIP);
   /* TODO: FREE */
-  int ret,i;
+  int num_local_mips,i;
 
   struct msghdr recv_msg = { 0 };
   struct iovec recv_iov[1];
+
+  for(i = 0; i < MAX_MIP; i++){
+    routing_table[i].dest_mip = 255;
+    routing_table[i].next_hop = 255;
+    routing_table[i].cost = 255;
+
+    local_mips[i] = 255;
+  }
 
   recv_iov[0].iov_base = local_mips;
   recv_iov[0].iov_len = MAX_MIP;
@@ -27,46 +33,40 @@ int init_distance_table(int un_route_sock, struct distance_table_entry
   recv_msg.msg_iov = recv_iov;
   recv_msg.msg_iovlen = 1;
 
-  ret = recvmsg(un_route_sock,&recv_msg,0);
+  /* Receive an array of characters, each indicating a local MIP address */
+  num_local_mips = recvmsg(un_route_sock,&recv_msg,0);
 
-  if(ret == -1){
+  if(num_local_mips == -1){
     if(errno == EINTR){
       return 0;
     }
     return -1;
-  }else if(ret == 0){
+  }else if(num_local_mips == 0){
     return -2;
   }
 
-  for(i = 0; i < ret; i++){
-    distance_table[i].dest_mip = local_mips[i];
-    distance_table[i].next_hop = (char *) malloc(1);
-    distance_table[i].next_hop[0] = local_mips[i];
-    distance_table[i].cost = (char *) malloc(1);
-    distance_table[i].cost[0] = 0;
-
-    routing_table[i].dest_mip = distance_table[i].dest_mip;
-    routing_table[i].next_hop = distance_table[i].next_hop[0];
-    routing_table[i].cost = distance_table[i].cost[0];
+  for(i = 0; i < num_local_mips; i++){
+    routing_table[i].dest_mip = local_mips[i];
+    routing_table[i].next_hop = local_mips[i];
+    routing_table[i].cost = 0;
   }
 
   struct msghdr send_msg = { 0 };
   struct iovec send_iov[1];
 
   send_iov[0].iov_base = routing_table;
-  send_iov[0].iov_len = sizeof(struct routing_table_entry) * MAX_MIP;
+  send_iov[0].iov_len = sizeof(struct routing_table_entry) * num_local_mips;
 
   send_msg.msg_iov = send_iov;
   send_msg.msg_iovlen = 1;
 
-  ret = sendmsg(un_route_sock,&send_msg,0);
 
-  if(ret == -1){
+
+  if(sendmsg(un_route_sock,&send_msg,0) == -1){
     return -1;
   }
 
-
-  return 1;
+  return num_local_mips;
 }
 
 
@@ -78,8 +78,12 @@ int main(int argc, char *argv[]){
     fprintf(stderr,"USAGE: %s\n",usage);
   }
 
-  struct routing_table_entry routing_table[MAX_MIP] = { 0 };
+  struct routing_table_entry routing_table[MAX_MIP];
   struct distance_table_entry distance_table[MAX_MIP] = { 0 };
+  uint8_t local_mips[MAX_MIP] = { 0 };
+  uint8_t neighbours[MAX_MIP] = { 0 };
+  int num_local_mips;
+  int num_neighbours = 0;
 
   int un_route_sock;
   int un_fwd_sock;
@@ -101,7 +105,7 @@ int main(int argc, char *argv[]){
   int last_update_timestamp = time(NULL);
   int timeout;
 
-  int i;
+  int i,j,k,l;
   ssize_t ret;
 
   route_sock_ind = 1;
@@ -196,8 +200,17 @@ int main(int argc, char *argv[]){
     exit(EXIT_FAILURE);
   }
 
-  /* Initialize distance table */
+  /* Initialize routing tables */
+  num_local_mips = init_routing_table(un_route_sock, routing_table, local_mips);
 
+  for(i = 0; i < MAX_MIP; i++){
+    distance_table[i].dest_mip = 255;
+    distance_table[i].next_hop = NULL;
+    distance_table[i].cost = NULL;
+    distance_table[i].timestamp = NULL;
+
+    neighbours[i] = 255;
+  }
 
 
   for(;;){
@@ -217,17 +230,24 @@ int main(int argc, char *argv[]){
     /* If it has been at least 30 seconds since the last routing table update,
      * send a routing table update */
     if (nfds == 0){
-      last_update_timestamp = time(NULL);
       struct msghdr msg = { 0 };
       struct iovec iov[1];
 
       iov[0].iov_base = routing_table;
-      iov[0].iov_len = sizeof(routing_table);
+      iov[0].iov_len = sizeof(routing_table_entry)*num_local_mips;
 
       msg.msg_iov = iov;
       msg.msg_iovlen = 1;
 
-      ret = sendmsg(un_route_sock,&msg,0);
+      if(sendmsg(un_route_sock,&msg,0) == -1){
+        perror("main: sendmsg: route update");
+        close(un_route_sock);
+        close(un_fwd_sock);
+        close(signal_fd);
+        exit(EXIT_FAILURE);
+      }
+
+      last_update_timestamp = time(NULL);
     }
 
     for(i = 0; i < nfds; i++){
@@ -237,7 +257,7 @@ int main(int argc, char *argv[]){
         struct iovec iov[2];
 
         uint8_t src_mip;
-        struct routing_table_entry recv_route_table[MAX_MIP];
+        struct routing_table_entry recv_route_table[MAX_MIP] = { 0 };
 
         iov[0].iov_base = &src_mip;
         iov[0].iov_len = sizeof(src_mip);
@@ -271,8 +291,56 @@ int main(int argc, char *argv[]){
           exit(EXIT_FAILURE);
         }
 
+        for(j = 0; j < num_neighbours; j++){
+          if(src_mip == neighbours[i]) break;
+          if(j == num_neighbours-1){
+            neighbours[j+1] = src_mip;
+            for(k = 0; k < MAX_MIP; k++){
+              void *tmp;
 
+              tmp = distance_table[k].next_hop;
+              distance_table[k].next_hop = (uint8_t *) malloc(num_neighbours+1);
+              memcpy(distance_table[k].next_hop,tmp,num_neighbours);
+              distance_table[k].next_hop[num_neighbours] = src_mip;
+              free(tmp);
 
+              tmp = distance_table[k].cost;
+              distance_table[k].cost = (uint8_t *) malloc(num_neighbours+1);
+              memcpy(distance_table[k].cost,tmp,num_neighbours);
+              distance_table[k].cost[num_neighbours] = 16;
+              free(tmp);
+
+              tmp = distance_table[k].timestamp;
+              distance_table[k].timestamp = (time_t *) malloc(sizeof(time_t) * (num_neighbours + 1));
+              memcpy(distance_table[k].timestamp,tmp,sizeof(time_t) * num_neighbours);
+              distance_table[k].timestamp[num_neighbours] = time(NULL);
+              free(tmp);
+            }
+          }
+        }
+
+        /* Number of rows in the routing table received */
+        ret--;
+        ret /= 3;
+
+        for(j = ret; j < ret; j++){
+
+          int goes_through_this = 0;
+          for(k = 0; k < num_local_mips; k++){
+            if(recv_route_table[j].next_hop == local_mips[k]){
+              goes_through_this = 1;
+            }
+          }
+          if(goes_through_this) continue;
+
+          for(k = 0; k < MAX_MIP; k++){
+            if(recv_route_table[j].dest_mip == distance_table[k].dest_mip){
+              
+            }
+            for(l = 0; l < num_neighbours; l++){
+            }
+          }
+        }
 
 
       }
