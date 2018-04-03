@@ -8,6 +8,8 @@
 #include <net/if.h>
 #include <netpacket/packet.h>
 #include <sys/epoll.h>
+#include <sys/signalfd.h>
+#include <signal.h>
 #include "mip_daemon.h"
 
 
@@ -234,6 +236,26 @@ int setup_eth_sockets(struct mip_arp_entry *local_mip_mac_table,
 } /* setup_eth_sockets END */
 
 
+int setup_signal_fd(){
+  int signal_fd;
+
+  /* Add a keyboard interrupt signal handler for the epoll instance */
+  sigset_t mask;
+
+  sigemptyset(&mask);
+  sigaddset(&mask, SIGINT);
+  sigaddset(&mask, SIGQUIT);
+
+  sigprocmask(SIG_BLOCK, &mask, NULL);
+
+  signal_fd = signalfd(-1, &mask, 0);
+  if(signal_fd == -1){
+    return -1;
+  }
+
+  return signal_fd;
+}
+
 
 /**
  * Creates an epoll instance and adds all sockets provided as arguments to the
@@ -304,7 +326,15 @@ int create_epoll_instance(/*int un_sock,
         sock_container.local_mip_mac_table[i].socket, &ep_eth_ev) == -1 ){
       return -3;
     }
+  }
 
+  struct epoll_event ep_sig_ev = { 0 };
+  ep_sig_ev.events = EPOLLIN | EPOLLERR;
+  ep_sig_ev.data.fd = *sock_container.signal_fd;
+
+  if(epoll_ctl(epfd, EPOLL_CTL_ADD, *sock_container.signal_fd, &ep_sig_ev)
+      == -1){
+    return -4;
   }
 
   return epfd;
