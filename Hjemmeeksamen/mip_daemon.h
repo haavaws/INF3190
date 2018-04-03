@@ -75,6 +75,8 @@ int setup_unix_socket(char* un_sock_name);
 int setup_eth_sockets(struct mip_arp_entry *local_mip_mac_table,
   int num_mip_addrs, int debug);
 
+int setup_signal_fd();
+
 int create_epoll_instance(struct sockets sock_container);
 
 
