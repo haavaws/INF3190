@@ -19,6 +19,10 @@ void print_help(char *file_name){
     "information\n");
   fprintf(stderr,"<Socket_application>: name of socket for IPC with "
     "application\n");
+  fprintf(stderr,"<Socket_route>: name of socket for IPC of routing data with "
+    "the routing daemon\n");
+  fprintf(stderr,"<Socket_forwarding>: name of socket for IPC of forwarding "
+    "lookup with the routing daemon\n");
   fprintf(stderr,"[MIP addresses ...]: one unique MIP address per interface "
     "with a unique MAC address, in the form of a number between 0 and 255\n");
   exit(EXIT_FAILURE);
