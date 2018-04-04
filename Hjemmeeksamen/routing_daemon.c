@@ -14,7 +14,7 @@
 int init_routing_data(int un_route_sock,
     struct routing_table_entry *routing_table,
     struct distance_table_entry *distance_table, uint8_t *neighbours,
-    uint8_t *local_mips){
+    uint8_t *local_mips, int debug){
 
   int num_local_mips,i;
 
@@ -38,6 +38,11 @@ int init_routing_data(int un_route_sock,
 
   /* Receive an array of characters, each indicating a local MIP address */
   num_local_mips = recvmsg(un_route_sock, &recv_msg, 0);
+
+
+  if(debug){
+    fprintf(stdout, "Received %d local MIPs from the MIP daemon.\n",num_local_mips);
+  }
 
   if(num_local_mips == -1){
     return -1;
@@ -66,6 +71,15 @@ int init_routing_data(int un_route_sock,
     distance_table[i].timestamp = NULL;
   }
 
+  if(debug){
+    for(i = 0; i < num_local_mips; i++){
+      fprintf(stdout, "Local MIP address %d: %d\n", i, routing_table[i].dest_mip);
+    }
+  }
+
+  if(debug){
+    fprintf(stdout,"Broadcasting initial routing data.\n");
+  }
   /* Broadcast the local MIP addresses to all neighbours */
   struct msghdr send_msg = { 0 };
   struct iovec send_iov[2];
@@ -83,8 +97,14 @@ int init_routing_data(int un_route_sock,
   send_msg.msg_iov = send_iov;
   send_msg.msg_iovlen = 2;
 
-  if(sendmsg(un_route_sock, &send_msg, 0) == -1){
+  ssize_t ret = sendmsg(un_route_sock, &send_msg, 0);
+
+  if(ret == -1){
     return -1;
+  }
+
+  if(debug){
+    fprintf(stdout,"Sent %ld bytes to MIP daemon.\n", ret);
   }
 
   return num_local_mips;
@@ -92,9 +112,14 @@ int init_routing_data(int un_route_sock,
 
 int send_routing_table_update(int un_route_sock,
     struct routing_table_entry *routing_table, uint8_t *neighbours,
-    int num_neighbours){
+    int num_neighbours, int debug){
 
   int i,j;
+  ssize_t ret;
+
+  if(debug){
+    fprintf(stdout, "Sending update to %d neighbours.\n", num_neighbours);
+  }
 
   for(i = 0; i < num_neighbours; i++){
     struct routing_table_entry send_table[MAX_MIP];
@@ -124,9 +149,17 @@ int send_routing_table_update(int un_route_sock,
     msg.msg_iov = iov;
     msg.msg_iovlen = 2;
 
-    if(sendmsg(un_route_sock, &msg, 0) == -1){
+    ret = sendmsg(un_route_sock, &msg, 0);
+
+    if(ret == -1){
       return -1;
     }
+
+    if(debug){
+      fprintf(stdout, "%ld bytes sent to neighbour with MIP address %d.\n", ret, dest_neighbour);
+    }
+
+
   }
 
 
@@ -188,7 +221,6 @@ int clean_dist_route(struct distance_table_entry *distance_table,
         if(routing_table[j].next_hop == neighbour){
           updated = 1;
 
-          routing_table[j].next_hop = BAD_MIP;
           routing_table[j].cost = UNREACHABLE;
 
           for(k = 0; k < *num_neighbours; k++){
@@ -222,7 +254,6 @@ int clean_dist_route(struct distance_table_entry *distance_table,
          * same as the next hop of the expired entry */
         if(routing_table[j].next_hop == distance_table[j].next_hop[i]){
           routing_table[j].cost = distance_table[j].cost[i];
-          routing_table[j].next_hop = BAD_MIP;
 
           updated = 1;
         }
@@ -245,7 +276,7 @@ int clean_dist_route(struct distance_table_entry *distance_table,
 }
 
 int rm_empty_route_dist(struct distance_table_entry *distance_table,
-    struct routing_table_entry *routing_table){
+    struct routing_table_entry *routing_table, int debug){
 
   int i,j;
 
@@ -256,7 +287,12 @@ int rm_empty_route_dist(struct distance_table_entry *distance_table,
    * the distance and routing tables */
   for(i = 0; i < MAX_MIP; i++){
     if(routing_table[i].dest_mip == BAD_MIP) break;
-    if(routing_table[i].next_hop == BAD_MIP){
+    if(routing_table[i].cost == UNREACHABLE){
+
+      if(debug){
+        fprintf(stdout, "Destination MIP %d removed from routing and distance table.\n", routing_table[i].dest_mip);
+      }
+
       removed ++;
       free(distance_table[i].next_hop);
       free(distance_table[i].cost);
@@ -284,12 +320,8 @@ int rm_empty_route_dist(struct distance_table_entry *distance_table,
 
 
 int main(int argc, char *argv[]){
-  char const *usage = "./routing_daemon <Socket_route> <Socket_forwarding>";
-  printf("%s\n",usage);
-
-  if(argc<3){
-    fprintf(stderr,"USAGE: %s\n",usage);
-  }
+  char const *usage = "./routing_daemon [-d] <Socket_route> "
+      "<Socket_forwarding>";
 
   /* Entries in the distance and routing table for the local MIP addresses on
    * this node are handled specially, they are never updated after being
@@ -307,9 +339,9 @@ int main(int argc, char *argv[]){
   int un_fwd_sock;
   int signal_fd;
 
+  int debug;
   int route_sock_ind;
   int fwd_sock_ind;
-
   char* un_route_name;
   char* un_fwd_name;
 
@@ -327,8 +359,30 @@ int main(int argc, char *argv[]){
   int i,j,k,l;
   ssize_t ret;
 
+
+  if(argc<3){
+    fprintf(stderr,"USAGE: %s\n",usage);
+    exit(EXIT_FAILURE);
+  }
+
+
   route_sock_ind = 1;
   fwd_sock_ind = 2;
+
+  if(strcmp(argv[1],"-d") == 0){
+    if(argc<4){
+      fprintf(stderr,"USAGE: %s\n",usage);
+    }
+
+    debug = 1;
+    route_sock_ind++;
+    fwd_sock_ind++;
+
+    if(debug){
+      fprintf(stdout, "Debug mode activated.\n");
+    }
+  }
+
 
   un_route_name = argv[route_sock_ind];
   un_fwd_name = argv[fwd_sock_ind];
@@ -337,11 +391,16 @@ int main(int argc, char *argv[]){
   struct sockaddr_un route_addr = { 0 };
   struct sockaddr_un fwd_addr = { 0 };
 
+  if(debug){
+    fprintf(stdout, "Setting up unix sockets\n");
+  }
+
   un_route_sock = socket(AF_UNIX, SOCK_SEQPACKET, 0);
   if(un_route_sock == -1){
     perror("main: socket: un_route_sock");
     exit(EXIT_FAILURE);
   }
+
   un_fwd_sock = socket(AF_UNIX, SOCK_SEQPACKET, 0);
   if(un_fwd_sock == -1){
     perror("main: socket: un_fwd_sock");
@@ -361,6 +420,11 @@ int main(int argc, char *argv[]){
     close(un_fwd_sock);
     exit(EXIT_FAILURE);
   }
+
+  if(debug){
+    fprintf(stdout, "Routing socket set up to path: %s\n",un_route_name);
+  }
+
   if(connect(un_fwd_sock, (struct sockaddr *) &fwd_addr,
       sizeof(struct sockaddr_un)) == -1){
     perror("main: connect: un_fwd_sock");
@@ -369,6 +433,13 @@ int main(int argc, char *argv[]){
     exit(EXIT_FAILURE);
   }
 
+  if(debug){
+    fprintf(stdout, "Forwarding socket set up to path: %s\n",un_fwd_name);
+  }
+
+  if(debug){
+    fprintf(stdout, "Creating epoll instance.\n");
+  }
 
   /* Create an epoll instance for the sockets */
   epfd = epoll_create(1);
@@ -419,9 +490,16 @@ int main(int argc, char *argv[]){
     exit(EXIT_FAILURE);
   }
 
+  if(debug){
+    fprintf(stdout, "Epoll instance created.\n");
+  }
+
+  if(debug){
+    fprintf(stdout, "Initializing routing data.\n");
+  }
   /* Initialize routing tables */
   num_local_mips = init_routing_data(un_route_sock, routing_table,
-    distance_table, neighbours, local_mips);
+    distance_table, neighbours, local_mips, debug);
 
   if(num_local_mips == -1){
     perror("main: init_routing_data");
@@ -431,20 +509,48 @@ int main(int argc, char *argv[]){
     exit(EXIT_FAILURE);
   }
 
+  if(debug){
+    fprintf(stdout, "Routing data initialized.\n");
+  }
+
+  if(debug){
+    fprintf(stdout, "Beginning routing.\n");
+  }
+
   for(;;){
     /* How long the timeout should be for the call to epoll_wait */
     timeout = (UPDATE_WAIT - (now - last_update_timestamp)) * 1000;
 
+
+    if(debug){
+      fprintf(stdout, "Timeout: %ld.\n",timeout);
+    }
+
     /* If it has been at least 30 seconds since the last routing table update,
      * send a routing table update */
-    if(timeout<=0){
+    if(timeout <= 0){
+
+
+      if(debug){
+        fprintf(stdout, "At least 30 seconds since last update, sending routing update.\n");
+        fprintf(stdout, "Cleaning distance and routing tables.\n");
+      }
 
       /* Clean the distance and routing tables first */
-      clean_dist_route(distance_table, routing_table, neighbours,
+      ret = clean_dist_route(distance_table, routing_table, neighbours,
           last_neighbour_update, &num_neighbours, num_local_mips);
 
+      if(debug){
+        if(ret == 1){
+          fprintf(stdout, "Tables cleaned, but there was no update\n");
+        }else{
+          fprintf(stdout, "Tables cleaned and updated.\n");
+        }
+        fprintf(stdout, "Sending routing update.\n");
+      }
+
       if(send_routing_table_update(un_route_sock, routing_table, neighbours,
-          num_neighbours) == -1){
+          num_neighbours, debug) == -1){
         perror("main: send_routing_table_update");
         close(un_route_sock);
         close(un_fwd_sock);
@@ -452,12 +558,29 @@ int main(int argc, char *argv[]){
         exit(EXIT_FAILURE);
       }
 
+      if(debug){
+        fprintf(stdout, "Routing update sent.\n");
+        fprintf(stdout, "Removing empty entries in the routing and distance tables.\n");
+      }
+
       /* Only remove unreachable destinations after telling neighbours that
        * the destinations are unreachable */
-      rm_empty_route_dist(distance_table,routing_table);
+      ret = rm_empty_route_dist(distance_table, routing_table, debug);
+
+      if(debug){
+        if(ret > 0){
+          fprintf(stdout, "%ld entries were removed.\n", ret);
+        }else{
+          fprintf(stdout, "No entries were removed.\n");
+        }
+      }
 
       last_update_timestamp = now;
       timeout = UPDATE_WAIT * 1000;
+    }
+
+    if(debug){
+      fprintf(stdout, "Waiting for events.\n");
     }
 
     nfds = epoll_wait(epfd, events, MAX_EVENTS, timeout);
@@ -509,6 +632,11 @@ int main(int argc, char *argv[]){
 
       /* If a data was received on the routing socket */
       if(events[i].data.fd == un_route_sock){
+
+        if(debug){
+          fprintf(stdout, "Received data on routing socket.\n");
+        }
+
         int updated = 0;
 
         struct msghdr msg = { 0 };
@@ -545,6 +673,10 @@ int main(int argc, char *argv[]){
           exit(EXIT_FAILURE);
         }
 
+        if(debug){
+          fprintf(stdout, "Received %ld data on routing socket.\n", ret);
+        }
+
         int new_neighbour = 1;
 
         for(j = 0; j < num_neighbours; j++){
@@ -559,8 +691,17 @@ int main(int argc, char *argv[]){
          * neighbour, expand the distance table to make room for the new
          * neighbour */
         if(new_neighbour == 1){
+
+          if(debug){
+            fprintf(stdout, "Data was from a previously unknown neighbour, with MIP address: %d.\n", src_mip);
+            fprintf(stdout, "Current number of neighbours: %d\n", num_neighbours+1);
+          }
           neighbours[num_neighbours] = src_mip;
           last_neighbour_update[num_neighbours] = now;
+
+          if(debug){
+            fprintf(stdout, "Expanding distance table to make room for new neighbour.\n");
+          }
 
           /* Never update entries for local MIP addresses */
           for(j = num_local_mips; j < MAX_MIP; j++){
@@ -589,6 +730,11 @@ int main(int argc, char *argv[]){
         /* Number of rows in the routing table received */
         int num_entries = (ret - 1) / 3; /* next hop, destination, cost */
 
+        if(debug){
+          fprintf(stdout, "Number of rows in routing update received: %d.\n", num_entries);
+          fprintf(stdout, "Update distance and routing tables with the received data.\n");
+        }
+
         /* Update the distance table */
         for(j = num_entries; j < num_entries; j++){
 
@@ -615,7 +761,7 @@ int main(int argc, char *argv[]){
                 if(neighbours[l] == src_mip){
                   /* Update entry for the neighbour that the routing data was
                    * received from */
-                  distance_table[k].next_hop[l] = recv_route_table[j].next_hop;
+                  distance_table[k].next_hop[l] = neighbours[l];
                   distance_table[k].cost[l] = recv_route_table[j].cost + 1;
                   if(distance_table[k].cost[l] > UNREACHABLE){
                     distance_table[k].cost[l] = UNREACHABLE;
@@ -625,14 +771,18 @@ int main(int argc, char *argv[]){
                   if((distance_table[k].cost[l] < routing_table[k].cost)
                       || (distance_table[k].next_hop[l]
                       == routing_table[k].next_hop)){
+
+                    if(debug){
+                      fprintf(stdout, "Update for destination MIP %d, previous: next_hop: %d, cost: %d.\n", routing_table[k].dest_mip, routing_table[k].next_hop, routing_table[k].cost);
+                    }
                     routing_table[k].next_hop = distance_table[k].next_hop[l];
                     routing_table[k].cost = distance_table[k].cost[l];
 
-                    updated = 1;
-                  }
+                    if(debug){
+                      fprintf(stdout, "New: next_hop: %d, cost: %d.\n", routing_table[k].next_hop, routing_table[k].cost);
+                    }
 
-                  if(routing_table[k].cost == UNREACHABLE){
-                    routing_table[k].next_hop = BAD_MIP;
+                    updated = 1;
                   }
 
                   break;
@@ -653,9 +803,9 @@ int main(int argc, char *argv[]){
                 if(neighbours[l] == src_mip){
                   /* Update entry for the neighbour that the routing data was
                    * received from */
-                  distance_table[k].next_hop[l] = recv_route_table[j].next_hop;
+                  distance_table[k].next_hop[l] = neighbours[l];
                   distance_table[k].cost[l] = recv_route_table[j].cost + 1;
-                  if(distance_table[k].cost[l] >= UNREACHABLE){
+                  if(distance_table[k].cost[l] > UNREACHABLE){
                     distance_table[k].cost[l] = UNREACHABLE;
                   }
                   distance_table[k].timestamp[l] = now;
@@ -666,8 +816,8 @@ int main(int argc, char *argv[]){
                   routing_table[k].next_hop = distance_table[k].next_hop[l];
                   routing_table[k].cost = distance_table[k].cost[l];
 
-                  if(routing_table[k].cost == UNREACHABLE){
-                    routing_table[k].next_hop = BAD_MIP;
+                  if(debug){
+                    fprintf(stdout, "Received update for previously unknown destination MIP: %d, next_hop: %d, cost: %d\n",routing_table[k].dest_mip, routing_table[k].next_hop, routing_table[k].cost);
                   }
                 }
                 else {
@@ -688,11 +838,20 @@ int main(int argc, char *argv[]){
         /* If the routing update led to the routing table changing, send an
          * update to neighbours */
         if(updated == 1){
+          if(debug){
+            fprintf(stdout, "Routing table was updated by the received update.\n");
+            fprintf(stdout, "Cleaning distance and routing tables.");
+          }
           clean_dist_route(distance_table, routing_table, neighbours,
               last_neighbour_update, &num_neighbours, num_local_mips);
 
+          if(debug){
+            fprintf(stdout, "Tables cleaned.\n");
+            fprintf(stdout, "Sending update to all neighbours.\n");
+          }
+
           if(send_routing_table_update(un_route_sock, routing_table,
-              neighbours, num_neighbours) == -1){
+              neighbours, num_neighbours, debug) == -1){
             perror("main: send_routing_table_update");
             close(un_route_sock);
             close(un_fwd_sock);
@@ -700,13 +859,26 @@ int main(int argc, char *argv[]){
             exit(EXIT_FAILURE);
           }
 
+          if(debug){
+            fprintf(stdout, "Updates sent.\n");
+            fprintf(stdout, "Removing empty entries in the routing and distance tables.\n");
+          }
+
           /* Only remove unreachable destinations after telling neighbours that
            * the destinations are unreachable */
-          rm_empty_route_dist(distance_table,routing_table);
+          rm_empty_route_dist(distance_table,routing_table, debug);
+
+          if(debug){
+            fprintf(stdout, "Entries removed.\n");
+          }
         }
       } /* Receive data on routing socket END */
 
       else if(events[i].data.fd == un_fwd_sock){
+
+        if(debug){
+          fprintf(stdout, "Received data on forwarding socket.\n");
+        }
         struct msghdr recv_msg = { 0 };
         struct iovec recv_iov[1];
 
@@ -745,6 +917,11 @@ int main(int argc, char *argv[]){
           continue;
         }
 
+        if(debug){
+          fprintf(stdout, "Received %ld bytes.\n", ret);
+          fprintf(stdout, "Received request for next hop MIP address for destination MIP address: %d\n", dest_mip);
+        }
+
         struct msghdr send_msg = { 0 };
         struct iovec send_iov[1];
 
@@ -758,15 +935,24 @@ int main(int argc, char *argv[]){
         send_msg.msg_iov = send_iov;
         send_msg.msg_iovlen = 1;
 
+        if(debug){
+          fprintf(stdout, "Cleaning tables before responding to request.\n");
+        }
+
         /* Clean up the routing and distance tables before looking up the next
          * hop for the route */
         if(clean_dist_route(distance_table, routing_table, neighbours,
             last_neighbour_update, &num_neighbours, num_local_mips) == 1){
 
+          if(debug){
+            fprintf(stdout, "Tables cleaned.\n");
+            fprintf(stdout, "There was an update, sending routing update before continuing.\n");
+          }
+
           /* If clean-up changed the routing table, send an update to
            * neighbours */
           if(send_routing_table_update(un_route_sock, routing_table,
-              neighbours, num_neighbours) == -1){
+              neighbours, num_neighbours, debug) == -1){
             perror("main: send_routing_table_update: un_fwd_sock");
             close(un_route_sock);
             close(un_fwd_sock);
@@ -774,11 +960,24 @@ int main(int argc, char *argv[]){
             exit(EXIT_FAILURE);
           }
 
+          if(debug){
+            fprintf(stdout, "Update sent.\n");
+            fprintf(stdout, "Removing empty entries in the tables.\n");
+          }
+
           /* Only remove unreachable entries after telling neighbours that the
            * destinations are unreachable */
-          rm_empty_route_dist(distance_table,routing_table);
+          rm_empty_route_dist(distance_table,routing_table, debug);
+
+          if(debug){
+            fprintf(stdout, "Empty entries removed.\n");
+          }
 
           last_update_timestamp = now;
+        }else{
+          if(debug){
+            fprintf(stdout, "Tables cleaned, no update.\n");
+          }
         }
 
         for(i = 0; i < MAX_MIP; i++){
@@ -787,12 +986,25 @@ int main(int argc, char *argv[]){
           }else if(routing_table[i].dest_mip == BAD_MIP) break;
         }
 
+        if(debug){
+          if(next_hop == 255){
+            fprintf(stdout, "Couldn't find a route for the request destination MIP address.\n");
+          }else{
+            fprintf(stdout, "Next hop for destination MIP addres %d is %d\n", dest_mip, next_hop);
+          }
+          fprintf(stdout, "Responding to MIP daemon.\n");
+        }
+
         if(sendmsg(events[i].data.fd,&send_msg,0) == -1){
           perror("main: sendmsg: un_fwd_sock");
           close(un_route_sock);
           close(un_fwd_sock);
           close(signal_fd);
           exit(EXIT_FAILURE);
+        }
+
+        if(debug){
+          fprintf(stdout, "Response sent.\n");
         }
       } /* Receive data on forward socket END */
     }
