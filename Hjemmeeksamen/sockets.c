@@ -271,9 +271,7 @@ int setup_signal_fd(){
  *                            epoll_ctl() fails for the unix socket, and -3 if
  *                            epoll_ctl() fails for an ethernet socket.
  */
-int create_epoll_instance(/*int un_sock,
-    struct mip_arp_entry *local_mip_mac_table, int num_eth_sds*/
-  struct sockets sock_container){
+int create_epoll_instance(struct sockets sock_container){
 
   /* Code concerning epoll is based on code from 'man 7 epoll' and group
   * session https://github.uio.no/persun/inf3190/blob/master/plenum3/epoll.c */
