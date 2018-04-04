@@ -57,6 +57,23 @@ struct sockets {
   int *num_eth_sds;
 };
 
+struct packet_queues {
+  struct packet_queue **first_packet;
+  struct packet_queue **last_packet;
+  struct packet_queue **first_broadcast_packet;
+  struct packet_queue **last_broadcast_packet;
+};
+
+struct packet_queue{
+  int is_packet;
+  void *buf;
+  uint8_t dest_mip;
+  struct packet_queue *next_packet;
+  uint8_t next_hop;
+  int payload_len;
+  uint8_t tra;
+};
+
 /* Functions are documented where they are defined */
 
 /* Defined in debug.c */
@@ -81,6 +98,12 @@ int create_epoll_instance(struct sockets sock_container);
 
 
 /* Defined in mip.c */
+int mac_eql(uint8_t *mac1, uint8_t *mac2);
+
+int is_broadcast_mac(uint8_t *mac);
+
+uint16_t get_mip_payload_len(struct mip_frame *frame);
+
 uint8_t get_mip_tra(struct mip_frame *frame);
 
 uint8_t get_mip_dest(struct mip_frame *frame);
@@ -91,17 +114,22 @@ int update_mip_arp (struct mip_arp_entry *arp_table, uint8_t mip, uint8_t *mac,
   int socket, int debug);
 
 void construct_mip_packet(struct mip_frame* frame, uint8_t destination,
-  uint8_t source, uint8_t tra, char* payload, int payload_len);
+  uint8_t source, uint8_t tra, void* payload, int payload_len);
 
 ssize_t send_mip_packet(struct mip_arp_entry *arp_table,
-  struct mip_arp_entry *local_mip_mac_table, uint8_t dest_mip, char* payload,
-  uint8_t tra, int send_sd, int debug);
+  struct mip_arp_entry *local_mip_mac_table, uint8_t dest_mip,
+  uint8_t next_hop, void* payload, int payload_len, uint8_t tra, int send_sd,
+  int debug);
 
-int recv_mip_packet(struct mip_arp_entry *mip_arp_table,
-  struct mip_arp_entry *local_mip_mac_table, int socket, uint8_t *src_mip_buf,
-  char *buf, int debug);
+int forward_mip_packet(struct mip_arp_entry *arp_table,
+    struct mip_arp_entry *local_mip_mac_table, uint8_t next_hop,
+    struct ethernet_frame *frame, int frame_size, int debug);
 
-int send_mip_broadcast(int epoll_fd, struct mip_arp_entry *mip_arp_table,
+int recv_mip_packet(struct mip_arp_entry *mip_arp_table, int socket,
+  struct sockets sock_container, struct packet_queues queue_container,
+  int debug);
+
+int send_mip_broadcast(struct mip_arp_entry *mip_arp_table,
   int num_eth_sds, struct mip_arp_entry *local_mip_mac_table, uint8_t dest_mip,
   int debug);
 
