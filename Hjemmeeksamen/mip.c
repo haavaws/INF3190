@@ -7,6 +7,25 @@
 #include "mip_daemon.h"
 
 
+void free_queues(struct packet_queues queue_container){
+  struct packet_queue *packet = *queue_container.first_packet;
+  while(packet != NULL){
+    struct packet_queue *tmp = packet->next_packet;
+    free(packet->buf);
+    free(packet);
+    packet = tmp;
+  }
+  packet = *queue_container.first_broadcast_packet;
+  while(packet != NULL){
+    struct packet_queue *tmp = packet->next_packet;
+    free(packet->buf);
+    free(packet);
+    packet = tmp;
+  }
+}
+
+
+
 
 int mac_eql(uint8_t *mac1, uint8_t *mac2){
   int i;
@@ -31,7 +50,7 @@ int is_broadcast_mac(uint8_t *mac){
 
 uint16_t get_mip_payload_len(struct mip_frame *frame){
   uint16_t payload_len = 0;
-  payload_len |= (frame->header_bytes[2] | 0b00011111) << 4;
+  payload_len |= (frame->header_bytes[2] & 0b00011111) << 4;
   payload_len |= frame->header_bytes[3] >> 4;
   return payload_len;
 }
@@ -74,6 +93,15 @@ uint8_t get_mip_src(struct mip_frame *frame){
   source |= frame->header_bytes[1] << 3;
   source |= frame->header_bytes[2] >> 5;
   return source;
+}
+
+uint8_t get_mip_ttl(struct mip_frame *frame){
+  return frame->header_bytes[3] | 0b1111;
+}
+
+void set_mip_ttl(struct mip_frame *frame, uint8_t ttl){
+  frame->header_bytes[3] &= 0b11110000;
+  frame->header_bytes[3] |= ttl;
 }
 
 
@@ -120,6 +148,10 @@ int update_mip_arp (struct mip_arp_entry *arp_table, uint8_t mip,
     }
     /* If the MIP address has an unexpired entry in arp_table */
     else if(arp_table[i].mip_addr == mip){
+
+      if(debug){
+        fprintf(stdout, "MIP was already in cache.\n");
+      }
       return i;
     }
   }
@@ -258,8 +290,8 @@ ssize_t send_mip_packet(struct mip_arp_entry *arp_table,
   eth_ptcl = htons(ETH_P_MIP);
 
   /* Construct the ethernet frame and MIP packet and send it */
-  frame = (struct ethernet_frame *) malloc (sizeof(struct ethernet_frame) +
-    msg_len);
+  frame = (struct ethernet_frame *) calloc (sizeof(struct ethernet_frame) +
+    msg_len, 1);
 
   memcpy(frame->destination, dest_mac, MAC_SIZE);
   memcpy(frame->source, src_mac, MAC_SIZE);
@@ -267,6 +299,10 @@ ssize_t send_mip_packet(struct mip_arp_entry *arp_table,
 
   construct_mip_packet(&frame->payload, dest_mip, src_mip, tra, payload,
       msg_len);
+
+    if(debug){
+      fprintf(stdout, "Payload length of sent data: %d\n", get_mip_payload_len(&frame->payload)*4);
+    }
 
   if (debug){
     fprintf(stdout, "Destination MAC: "); print_mac(frame->destination);
@@ -368,7 +404,7 @@ int forward_mip_packet(struct mip_arp_entry *arp_table,
  */
 int recv_mip_packet(struct mip_arp_entry *mip_arp_table, int socket,
     struct sockets sock_container, struct packet_queues queue_container,
-    int debug){
+    int debug, int *num_packet, int *num_bpacket){
   /* MIP-ARP data for the socket that received the frame */
   struct mip_arp_entry local_entry;
   void *eth_buf = malloc(MAX_ETH_FRAME_SIZE);
@@ -377,6 +413,7 @@ int recv_mip_packet(struct mip_arp_entry *mip_arp_table, int socket,
   uint8_t mip_tra;
   uint8_t src_mip;
   uint8_t dest_mip;
+  uint8_t mip_ttl;
   void *mip_payload;
   int payload_len;
   ssize_t ret;
@@ -394,6 +431,7 @@ int recv_mip_packet(struct mip_arp_entry *mip_arp_table, int socket,
   ret = recv(socket, eth_buf, MAX_ETH_FRAME_SIZE, 0);
 
   if(ret == -1){
+    free(eth_buf);
     return -1;
   }
 
@@ -403,13 +441,18 @@ int recv_mip_packet(struct mip_arp_entry *mip_arp_table, int socket,
   mip_tra = get_mip_tra(&recv_eth_frame->payload);
   src_mip = get_mip_src(&recv_eth_frame->payload);
   dest_mip = get_mip_dest(&recv_eth_frame->payload);
+  mip_ttl = get_mip_ttl(&recv_eth_frame->payload);
   mip_payload = recv_eth_frame->payload.payload;
   payload_len = get_mip_payload_len(&recv_eth_frame->payload) * 4;
+  if(debug){
+    fprintf(stdout, "Payload length of received packet: %d\n", payload_len);
+  }
 
   if(debug){
     if(mip_tra == 0b100) fprintf(stdout,"Received transport packet.\n");
     else if(mip_tra == 0b001) fprintf(stdout,"Received MIP-ARP broadcast.\n");
     else if(mip_tra == 0b000) fprintf(stdout,"Received MIP-ARP response.\n");
+    else if(mip_tra == 0b010) fprintf(stdout,"Received routing packet.\n");
     fprintf(stdout,"Destination MAC: ");print_mac(recv_eth_frame->destination);
     fprintf(stdout,"\tDestination MIP: %d\n",dest_mip);
     fprintf(stdout,"Source MAC: "); print_mac(recv_eth_frame->source);
@@ -420,17 +463,47 @@ int recv_mip_packet(struct mip_arp_entry *mip_arp_table, int socket,
     fprintf(stdout,"Bytes received: %ld\n\n",ret);
   }
 
+  if(debug){
+    fprintf(stdout, "Checking if the packet was intended for this host.\n");
+  }
+
   /* Verify that the packet was for this host, otherwise discard it */
   if(mac_eql(local_entry.mac_addr, recv_eth_frame->destination) != 1
-      && is_broadcast_mac(recv_eth_frame->destination)){
+      && is_broadcast_mac(recv_eth_frame->destination) != 1){
     /* The destination MAC address in the ethernet header did not match the
      * MAC address of the receiving interface */
+     free(eth_buf);
      return -2;
+  }
+
+  if(debug){
+    fprintf(stdout, "Packet was intended for this host.\n");
+    fprintf(stdout, "Checking if the packet is to be forwarded.\n");
   }
 
   /* Check if the packet needs to be forwarded */
   if(local_entry.mip_addr != dest_mip && dest_mip != 255){
-    /* TODO: Forward the packet */
+
+    /* If there is no connected router, discard the packet */
+    if(*sock_container.un_fwd_conn == -1){
+      free(eth_buf);
+      return -3;
+    }
+
+    if(debug){
+    fprintf(stdout, "Packet needs to be forwarded.\n");
+    fprintf(stdout, "Requesting next hop for destination from router.\n");
+    }
+
+    /* If the packet's TTL will reach -1 on forwarding */
+    if(mip_ttl == 0){
+      /* Discard the packet */
+      free(eth_buf);
+      return -4;
+    }
+
+    set_mip_ttl(&recv_eth_frame->payload, mip_ttl - 1);
+
     /* Ask the routing daemon for the next hop */
     struct msghdr lookup_msg = { 0 };
     struct iovec lookup_iov[1];
@@ -441,8 +514,13 @@ int recv_mip_packet(struct mip_arp_entry *mip_arp_table, int socket,
     lookup_msg.msg_iov = lookup_iov;
     lookup_msg.msg_iovlen = 1;
 
-    if(sendmsg(*sock_container.un_fwd_sock, &lookup_msg, 0) == -1){
-      return -3;
+    if(sendmsg(*sock_container.un_fwd_conn, &lookup_msg, 0) == -1){
+      free(eth_buf);
+      return -5;
+    }
+
+    if(debug){
+      fprintf(stdout, "Adding packet to packet queue awaiting forwarding response from router.\n");
     }
 
 
@@ -451,12 +529,17 @@ int recv_mip_packet(struct mip_arp_entry *mip_arp_table, int socket,
     struct packet_queue *packet = (struct packet_queue *)
         malloc(sizeof(struct packet_queue));
 
+    if(debug){
+      fprintf(stdout, "SEGFAULT 0\n");
+    }
+
     packet->is_packet = 1;
     packet->buf = eth_buf;
+    packet->src_mip = src_mip;
     packet->next_packet = NULL;
     packet->payload_len = ret;
 
-    if(queue_container.first_packet == NULL){
+    if(*queue_container.first_packet == NULL){
       *queue_container.first_packet = packet;
       *queue_container.last_packet = *queue_container.last_packet;
     }else{
@@ -465,14 +548,30 @@ int recv_mip_packet(struct mip_arp_entry *mip_arp_table, int socket,
           (*queue_container.last_packet)->next_packet;
     }
 
+    (*num_packet)++;
+
     return 0;
+  }
+
+  if(debug){
+    fprintf(stdout, "Packet doesn't need to be forwarded.\n");
+    fprintf(stdout, "Checking the packet can be used to update the MIP-ARP cache.\n");
   }
 
   /* Packet was originated from a neighbour */
   if(mip_tra == 0b000 || mip_tra == 0b010 || mip_tra == 0b001){
 
+    if(debug){
+      fprintf(stdout, "It can, updating cache.\n");
+    }
+
     /* Update the MIP-ARP cache with data from the received packet */
     update_mip_arp(mip_arp_table, src_mip, src_mac, socket, debug);
+
+    if(debug){
+      fprintf(stdout, "Cache updated.\n");
+      fprintf(stdout, "Checking if any of the packets in the queue waiting for broadcasts now can be forwarded.\n");
+    }
 
 
     /* Iterate over all packets waiting for a broadcast to see if the received
@@ -482,7 +581,13 @@ int recv_mip_packet(struct mip_arp_entry *mip_arp_table, int socket,
     struct packet_queue *previous_packet = NULL;
 
     while(packet != NULL){
+      /* If the packet can now be sent, send it and remove it from the queue */
       if(packet->next_hop == src_mip){
+
+        if(debug){
+          fprintf(stdout, "Packet with next hop %d can be forwarded.\n", src_mip);
+          fprintf(stdout, "Forwarding.\n");
+        }
 
         /* If the packet is an entire packet received from another node, to be
          * forwarded as is */
@@ -491,7 +596,6 @@ int recv_mip_packet(struct mip_arp_entry *mip_arp_table, int socket,
               sock_container.local_mip_mac_table, packet->next_hop,
               (struct ethernet_frame *) packet->buf, packet->payload_len,
               debug);
-          if(ret == -1) return -4;
         }
 
         /* If the packet is from a connected application or router, so that the
@@ -501,12 +605,16 @@ int recv_mip_packet(struct mip_arp_entry *mip_arp_table, int socket,
               sock_container.local_mip_mac_table, packet->dest_mip,
               packet->next_hop, packet->buf, packet->payload_len, packet->tra,
               0, debug);
-          if(ret == -1) return -4;
         }
-      }
 
-      /* If the packet was sent, update the packet queue */
-      if(ret >= 0){
+        if(ret == -1){
+          free(eth_buf);
+          return -6;
+        }
+
+        if(debug){
+          fprintf(stdout, "Sent %ld bytes to MIP address %d\n", ret, src_mip);
+        }
         struct packet_queue *tmp = packet;
 
         /* If this is the first packet in the queue */
@@ -532,6 +640,11 @@ int recv_mip_packet(struct mip_arp_entry *mip_arp_table, int socket,
         free(tmp->buf);
         free(tmp);
 
+        (*num_bpacket)--;
+
+        if(debug){
+          fprintf(stdout, "Number of packets in queue: %d\n", *num_bpacket);
+        }
       }
       /* Else, iterate */
       else{
@@ -548,7 +661,12 @@ int recv_mip_packet(struct mip_arp_entry *mip_arp_table, int socket,
     /* Discard the packet if no application is connected to the MIP
      * daemon */
     if(*sock_container.un_sock_conn == -1){
-      return -5;
+      free(eth_buf);
+      return -7;
+    }
+
+    if(debug){
+      fprintf(stdout,"Sending transport packet to connected application.\n");
     }
 
     /* Unix communication based on code from group session
@@ -570,12 +688,15 @@ int recv_mip_packet(struct mip_arp_entry *mip_arp_table, int socket,
     ret = sendmsg(*sock_container.un_sock_conn, &transport_msg, 0);
 
     if(ret == -1){
-      return -6;
+      free(eth_buf);
+      return -8;
     }
 
     if(debug){
       fprintf(stdout,"Sent %ld bytes to connected application.\n",ret);
     }
+
+    free(eth_buf);
 
   }
   /* Send the message to the connected routing daemon if the packet was a
@@ -584,15 +705,20 @@ int recv_mip_packet(struct mip_arp_entry *mip_arp_table, int socket,
     /* Discard the packet if no routing daemon is connected to the MIP
      * daemon */
     if(*sock_container.un_route_conn == -1){
-      return -7;
+      free(eth_buf);
+      return -9;
     }
 
     /* Remove any padding */
-    for(i = 0; i < MAX_MSG_SIZE; i++){
-      if(((char *) mip_payload)[i] == 255){
+    for(i = 0; i < payload_len; i++){
+      if((uint8_t)((char *) mip_payload)[i] == 255){
         payload_len = i;
         break;
       }
+    }
+
+    if(debug){
+      fprintf(stdout,"Sending routing packet to connected router.\n");
     }
 
     struct msghdr routing_msg = { 0 };
@@ -610,20 +736,34 @@ int recv_mip_packet(struct mip_arp_entry *mip_arp_table, int socket,
     ret = sendmsg(*sock_container.un_route_conn, &routing_msg, 0);
 
     if(ret == -1){
-      return -8;
+      return -10;
     }
 
     if(debug){
       fprintf(stdout,"Sent %ld bytes to connected router.\n", ret);
     }
+
+    free(eth_buf);
   }
   /* Respond if the packet was a MIP-ARP broadcast */
   else if(mip_tra == 0b001){
-    ret = send_mip_packet(mip_arp_table, sock_container.local_mip_mac_table,
-      src_mip, src_mip, NULL, 0, 0b000, 0, debug);
+
+    if(debug){
+      fprintf(stdout,"Responding to MIP-ARP broadcast.\n");
+    }
+    if(send_mip_packet(mip_arp_table, sock_container.local_mip_mac_table,
+      src_mip, src_mip, NULL, 0, 0b000, 0, debug) == -1){
+        free(eth_buf);
+        return -11;
+      }
+
+    if(debug){
+      fprintf(stdout,"Sent %ld bytes to MIP address %d\n", ret, src_mip);
+    }
+    free(eth_buf);
   }
 
-  return ret;
+  return mip_tra;
 } /* recv_mip_packet END */
 
 
