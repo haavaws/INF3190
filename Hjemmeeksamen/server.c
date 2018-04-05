@@ -5,6 +5,7 @@
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <errno.h>
+#include <inttypes.h>
 
 #define PONG_MSG_SIZE 5 /* size of a pong message */
 /* maximum size of a MIP message, not including headers */
@@ -62,19 +63,18 @@ int main(int argc, char* argv[]){
   /* Wait for ping */
   for(;;){
     char ping_msg[MAX_MSG_SIZE] = { 0 };
-    char pong_msg[PONG_MSG_SIZE] = { 0 };
-
     struct msghdr ping_msghdr = { 0 };
-    struct msghdr pong_msghdr = { 0 };
+    struct iovec iov_ping[2];
+    uint8_t src_mip;
 
-    struct iovec iov_ping[1];
-    struct iovec iov_pong[1];
+    iov_ping[0].iov_base = &src_mip;
+    iov_ping[0].iov_len = sizeof(src_mip);
 
-    iov_ping[0].iov_base = ping_msg;
-    iov_ping[0].iov_len = MAX_MSG_SIZE;
+    iov_ping[1].iov_base = ping_msg;
+    iov_ping[1].iov_len = MAX_MSG_SIZE;
 
     ping_msghdr.msg_iov = iov_ping;
-    ping_msghdr.msg_iovlen = 1;
+    ping_msghdr.msg_iovlen = 2;
 
     ret = recvmsg(un_sock,&ping_msghdr,0);
     if(ret == -1){
@@ -95,14 +95,21 @@ int main(int argc, char* argv[]){
 
     fprintf(stdout,"Received ping messsage:\n\"%s\"\n\n",ping_msg);
 
+    char pong_msg[PONG_MSG_SIZE] = { 0 };
+    struct msghdr pong_msghdr = { 0 };
+    struct iovec iov_pong[2];
+
     /* Send PONG response */
     strncpy(pong_msg,"PONG",5);
 
-    iov_pong[0].iov_base = pong_msg;
-    iov_pong[0].iov_len = PONG_MSG_SIZE;
+    iov_pong[0].iov_base = &src_mip;
+    iov_pong[0].iov_len = sizeof(src_mip);
+
+    iov_pong[1].iov_base = pong_msg;
+    iov_pong[1].iov_len = PONG_MSG_SIZE;
 
     pong_msghdr.msg_iov = iov_pong;
-    pong_msghdr.msg_iovlen = 1;
+    pong_msghdr.msg_iovlen = 2;
 
     if(sendmsg(un_sock,&pong_msghdr,0) == -1){
       perror("main: sendmsg: un_sock");
