@@ -68,6 +68,7 @@ struct packet_queue{
   int is_packet;
   void *buf;
   uint8_t dest_mip;
+  uint8_t src_mip;
   struct packet_queue *next_packet;
   uint8_t next_hop;
   int payload_len;
@@ -98,6 +99,8 @@ int create_epoll_instance(struct sockets sock_container);
 
 
 /* Defined in mip.c */
+void free_queues(struct packet_queues queue_container);
+
 int mac_eql(uint8_t *mac1, uint8_t *mac2);
 
 int is_broadcast_mac(uint8_t *mac);
@@ -126,12 +129,11 @@ int forward_mip_packet(struct mip_arp_entry *arp_table,
     struct ethernet_frame *frame, int frame_size, int debug);
 
 int recv_mip_packet(struct mip_arp_entry *mip_arp_table, int socket,
-  struct sockets sock_container, struct packet_queues queue_container,
-  int debug);
+    struct sockets sock_container, struct packet_queues queue_container,
+    int debug, int *num_packet, int *num_bpacket);
 
 int send_mip_broadcast(struct mip_arp_entry *mip_arp_table,
   int num_eth_sds, struct mip_arp_entry *local_mip_mac_table, uint8_t dest_mip,
   int debug);
-
 
 #endif
