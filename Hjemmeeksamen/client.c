@@ -1,4 +1,3 @@
-#include <inttypes.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -7,28 +6,31 @@
 #include <sys/time.h>
 #include <sys/un.h>
 #include <errno.h>
+#include <inttypes.h>
 
 #define PONG_MSG_SIZE 5 /* size of a pong message */
-/* timeout to wait for PONG message in microseconds */
-#define PONG_TIMEOUT_US 500000
+/* maximum size of a MIP message, not including headers */
+#define MAX_MSG_SIZE 1496
+/* timeout to wait for PONG message in milliseconds */
+#define PONG_TIMEOUT_US 500
 
 /* Based on code from group session
 * https://github.uio.no/persun/inf3190/tree/master/plenum3 */
 
-/* Client for pinging a user-specified MIP address with a user-specified
-* message through communicating over IPC with a MIP daemon using a
-* user-specified socket name */
+/* Server for receiving a ping with a ping message through communicating over
+* IPC with a MIP daemon using a user specified socket name */
 
-int main(int argc,char *argv[]){
+int main(int argc, char* argv[]){
   int un_sock; /* Socket to use for IPC */
   char *un_sock_name; /* Socket name to use for IPC */
-  uint8_t dest_mip;
-  char *ping_msg;
-  char pong_msg[PONG_MSG_SIZE];
-  struct timeval ping_start,ping_end; /* Start and end time of ping */
+  ssize_t ret;
+  /* Start and end time of ping */
+  struct timeval ping_start = { 0 }, ping_end = { 0 };
+  struct timeval timeout = { 0 }; /* Timeout for waiting for PONG response */
   time_t latency_s; /* Latency in seconds */
   suseconds_t latency_us; /* Latency in microseconds */
-  int ret;
+  uint8_t dest_mip;
+  char *ping_msg;
 
   /* Argument control */
   if(argc<4){
@@ -50,8 +52,8 @@ int main(int argc,char *argv[]){
 
   /* Get the MIP address from the input arguments */
   char *endptr;
-  ret = strtol(argv[1],&endptr,10);
-  if(*endptr != '\0' || argv[1][0] == '\0' || ret > 255 || ret < 0){
+  dest_mip = strtol(argv[1],&endptr,10);
+  if(*endptr != '\0' || argv[1][0] == '\0' || dest_mip > 255 || dest_mip < 0){
     fprintf(stderr,"USAGE: %s [-h] <Socket_application> [MIP addresses ...]\n",
         argv[0]);
     fprintf(stderr,"[-h]: optional help argument\n");
@@ -61,7 +63,8 @@ int main(int argc,char *argv[]){
         "with a unique MAC address, in the form of a number between 0 and "
         "255\n");
     exit(EXIT_FAILURE);
-  }else dest_mip = ret;
+  }
+
 
   ping_msg = argv[2];
   un_sock_name = argv[3];
@@ -76,17 +79,18 @@ int main(int argc,char *argv[]){
   }
 
   /* Set timeout for the socket */
-  struct timeval timeout = { 0 };
-  timeout.tv_sec = 1;
-  setsockopt(un_sock,SOL_SOCKET,SO_RCVTIMEO,&timeout,sizeof(struct timeval));
+  if(PONG_TIMEOUT_US >= 1000) timeout.tv_sec = PONG_TIMEOUT_US / 1000;
+  timeout.tv_usec = PONG_TIMEOUT_US * 1000 - timeout.tv_sec * 1000;
+  setsockopt(un_sock, SOL_SOCKET, SO_RCVTIMEO, &timeout,
+      sizeof(struct timeval));
 
-  /* Connect to the MIP daemon */
+  /* Connect to MIP daemon */
   struct sockaddr_un sockaddr;
   sockaddr.sun_family = AF_UNIX;
-  strcpy(sockaddr.sun_path, un_sock_name);
+  strcpy(sockaddr.sun_path,un_sock_name);
 
-  if (connect(un_sock, (struct sockaddr *)&sockaddr, sizeof(sockaddr)) == -1) {
-    perror("main: connect()");
+  if(connect(un_sock,(struct sockaddr*)&sockaddr,sizeof(sockaddr)) == -1){
+    perror("main: connect");
     close(un_sock);
     exit(EXIT_FAILURE);
   }
@@ -116,44 +120,69 @@ int main(int argc,char *argv[]){
     exit(EXIT_FAILURE);
   }
 
-  /* Wait for PONG response from pinged server through the connected MIP
-  * daemon */
-  struct msghdr pong_msghdr = {0};
+  /* Wait for ping */
+  for(;;){
+    char pong_msg[MAX_MSG_SIZE] = { 0 };
+    struct msghdr pong_msghdr = { 0 };
+    struct iovec iov_pong[2];
+    uint8_t src_mip;
 
-  struct iovec iov_pong[1];
-  iov_pong[0].iov_base = pong_msg;
-  iov_pong[0].iov_len = PONG_MSG_SIZE;
+    iov_pong[0].iov_base = &src_mip;
+    iov_pong[0].iov_len = sizeof(src_mip);
 
-  pong_msghdr.msg_iov = iov_pong;
-  pong_msghdr.msg_iovlen = 1;
+    iov_pong[1].iov_base = pong_msg;
+    iov_pong[1].iov_len = MAX_MSG_SIZE;
 
-  ret = recvmsg(un_sock,&pong_msghdr,0);
-  if(ret == -1){
-    if(errno == EAGAIN || errno == EWOULDBLOCK){
-      /* Timeout */
-      fprintf(stderr,"Ping timed out\n");
-    }else perror("main: recvmsg: un_sock");
-    close(un_sock);
-    exit(EXIT_FAILURE);
-  }else if(ret == 0){
-    fprintf(stderr,"MIP daemon performed a shutdown while waiting for PONG "
-        "response\n");
-    close(un_sock);
-    unlink(un_sock_name);
-    exit(EXIT_FAILURE);
+    pong_msghdr.msg_iov = iov_pong;
+    pong_msghdr.msg_iovlen = 2;
+
+    ret = recvmsg(un_sock, &pong_msghdr, 0);
+    if(ret == -1){
+      if(errno == EAGAIN || errno == EWOULDBLOCK){
+        /* Timeout */
+        fprintf(stderr,"Ping timed out\n");
+      }
+      else if(errno == EINTR){
+        fprintf(stdout,"Received interrupt, exiting server.\n");
+        close(un_sock);
+        exit(EXIT_SUCCESS);
+      }else perror("main: recvmsg: un_sock");
+      close(un_sock);
+      exit(EXIT_FAILURE);
+    }else if(ret == 0){
+      fprintf(stderr,"MIP daemon performed a shutdown while waiting for PONG "
+          "response\n");
+      close(un_sock);
+      unlink(un_sock_name);
+      exit(EXIT_FAILURE);
+    }
+
+    fprintf(stdout,"Received PONG response:\n\"%s\"\n\n",ping_msg);
+    fprintf(stdout, "From host: %d\n",src_mip);
+
+    /* Calculate how much time has been spent waiting */
+    gettimeofday(&ping_end,NULL);
+
+    /* Time in microseconds */
+    latency_s = ping_end.tv_sec - ping_start.tv_sec;
+    if(latency_s > 0){
+      latency_us = (1000000 - ping_start.tv_usec) + ping_end.tv_usec;
+    }else latency_us = ping_end.tv_usec - ping_start.tv_usec;
+
+    /* Received PONG response */
+    if(strcmp("PONG",pong_msg) == 0){
+      /* Can't verify that the source is the same as the destination, because
+       * the destination may have responded with a different MIP address as the
+       * sourec */
+      break;
+    }
+
   }
-  /* Timestamp after receiving PONG response */
-  gettimeofday(&ping_end,NULL);
-
-  /* Calculate latency in milliseconds */
-  latency_s = ping_end.tv_sec - ping_start.tv_sec;
-  if(latency_s > 0){
-    latency_us = (1000000 - ping_start.tv_usec) + ping_end.tv_usec;
-  }else latency_us = ping_end.tv_usec - ping_start.tv_usec;
 
   printf("Latency: %ld ms\n",latency_us/1000);
 
   close(un_sock);
 
   exit(EXIT_SUCCESS);
+
 }
