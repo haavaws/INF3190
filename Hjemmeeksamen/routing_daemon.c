@@ -11,6 +11,29 @@
 
 #include "routing_daemon.h"
 
+void print_rout_dest(struct routing_table_entry *routing_table){
+  int i;
+  for(i = 0; i < MAX_MIP; i++){
+    if(routing_table[i].dest_mip == 255){
+      break;
+    }
+    fprintf(stdout, "%d\t",routing_table[i].dest_mip);
+  }
+}
+
+void free_distance_table(struct distance_table_entry *distance_table){
+  int i;
+  for(i = 0; i < MAX_MIP; i++){
+    if(distance_table[i].dest_mip == BAD_MIP){
+      break;
+    }
+    free(distance_table[i].next_hop);
+    free(distance_table[i].cost);
+    free(distance_table[i].timestamp);
+  }
+
+}
+
 int init_routing_data(int un_route_sock,
     struct routing_table_entry *routing_table,
     struct distance_table_entry *distance_table, uint8_t *neighbours,
@@ -379,7 +402,7 @@ int main(int argc, char *argv[]){
     fwd_sock_ind++;
 
     if(debug){
-      fprintf(stdout, "Debug mode activated.\n");
+      fprintf(stdout, "----------------------------------Debug mode activated.------------------------------------------------\n");
     }
   }
 
@@ -555,6 +578,7 @@ int main(int argc, char *argv[]){
         close(un_route_sock);
         close(un_fwd_sock);
         close(signal_fd);
+        free_distance_table(distance_table);
         exit(EXIT_FAILURE);
       }
 
@@ -590,6 +614,7 @@ int main(int argc, char *argv[]){
       close(un_route_sock);
       close(un_fwd_sock);
       close(signal_fd);
+      free_distance_table(distance_table);
       exit(EXIT_FAILURE);
     }
 
@@ -610,6 +635,7 @@ int main(int argc, char *argv[]){
           close(un_route_sock);
           close(un_fwd_sock);
           close(signal_fd);
+          free_distance_table(distance_table);
           exit(EXIT_SUCCESS);
         }
         if(sig_info.ssi_signo == SIGINT){
@@ -618,6 +644,7 @@ int main(int argc, char *argv[]){
           close(un_route_sock);
           close(un_fwd_sock);
           close(signal_fd);
+          free_distance_table(distance_table);
           exit(EXIT_SUCCESS);
         }
         else if(sig_info.ssi_signo == SIGQUIT){
@@ -626,6 +653,7 @@ int main(int argc, char *argv[]){
           close(un_route_sock);
           close(un_fwd_sock);
           close(signal_fd);
+          free_distance_table(distance_table);
           exit(EXIT_SUCCESS);
         }
       }/* Keyboard signal END */
@@ -657,10 +685,11 @@ int main(int argc, char *argv[]){
         ret = recvmsg(events[i].data.fd,&msg,0);
 
         if(ret == -1){
+        perror("main: recvmsg: un_route_sock");
           close(un_route_sock);
           close(un_fwd_sock);
           close(signal_fd);
-          perror("main: recvmsg: un_route_sock");
+          free_distance_table(distance_table);
           exit(EXIT_FAILURE);
         }else if(ret == 0){
           fprintf(stderr,"MIP daemon performed a shutdown, lost connection, "
@@ -670,6 +699,7 @@ int main(int argc, char *argv[]){
           close(signal_fd);
           unlink(un_route_name);
           unlink(un_fwd_name);
+          free_distance_table(distance_table);
           exit(EXIT_FAILURE);
         }
 
@@ -680,7 +710,7 @@ int main(int argc, char *argv[]){
         int new_neighbour = 1;
 
         for(j = 0; j < num_neighbours; j++){
-          if(src_mip == neighbours[i]){
+          if(src_mip == neighbours[j]){
             new_neighbour = 0;
             last_neighbour_update[j] = now;
             break;
@@ -736,13 +766,16 @@ int main(int argc, char *argv[]){
         }
 
         /* Update the distance table */
-        for(j = num_entries; j < num_entries; j++){
+        for(j = 0; j < num_entries; j++){
 
           /* Ignore entry if the route's next hop is this node */
           int goes_through_this = 0;
           for(k = 0; k < num_local_mips; k++){
             if(recv_route_table[j].next_hop == local_mips[k]){
               goes_through_this = 1;
+              if(debug){
+                fprintf(stdout, "GOES THROUGH THIS.\n");
+              }
             }
           }
           if(goes_through_this) continue;
@@ -770,7 +803,8 @@ int main(int argc, char *argv[]){
 
                   if((distance_table[k].cost[l] < routing_table[k].cost)
                       || (distance_table[k].next_hop[l]
-                      == routing_table[k].next_hop)){
+                      == routing_table[k].next_hop && distance_table[k].cost[l]
+                      > routing_table[k].cost)){
 
                     if(debug){
                       fprintf(stdout, "Update for destination MIP %d, previous: next_hop: %d, cost: %d.\n", routing_table[k].dest_mip, routing_table[k].next_hop, routing_table[k].cost);
@@ -792,6 +826,10 @@ int main(int argc, char *argv[]){
             }
             /* New destination MIP */
             else if(distance_table[k].dest_mip == BAD_MIP){
+
+              if(debug){
+                fprintf(stdout, "Destination was previously unknown.\n");
+              }
 
               /* Initialize values for all neighbours */
               distance_table[k].dest_mip = recv_route_table[j].dest_mip;
@@ -856,6 +894,7 @@ int main(int argc, char *argv[]){
             close(un_route_sock);
             close(un_fwd_sock);
             close(signal_fd);
+            free_distance_table(distance_table);
             exit(EXIT_FAILURE);
           }
 
@@ -878,6 +917,7 @@ int main(int argc, char *argv[]){
 
         if(debug){
           fprintf(stdout, "Received data on forwarding socket.\n");
+          fprintf(stdout, "Forwarding socket: %d\n",events[i].data.fd);
         }
         struct msghdr recv_msg = { 0 };
         struct iovec recv_iov[1];
@@ -897,6 +937,7 @@ int main(int argc, char *argv[]){
           close(un_route_sock);
           close(un_fwd_sock);
           close(signal_fd);
+          free_distance_table(distance_table);
           if(errno == EINTR){
             fprintf(stdout,"Received interrupt, exiting router.");
             exit(EXIT_SUCCESS);
@@ -911,6 +952,7 @@ int main(int argc, char *argv[]){
           close(signal_fd);
           unlink(un_route_name);
           unlink(un_fwd_name);
+          free_distance_table(distance_table);
           exit(EXIT_FAILURE);
         }else if(ret != 1){
           /* Received unexpected data, do nothing */
@@ -957,6 +999,7 @@ int main(int argc, char *argv[]){
             close(un_route_sock);
             close(un_fwd_sock);
             close(signal_fd);
+            free_distance_table(distance_table);
             exit(EXIT_FAILURE);
           }
 
@@ -980,10 +1023,10 @@ int main(int argc, char *argv[]){
           }
         }
 
-        for(i = 0; i < MAX_MIP; i++){
-          if(routing_table[i].dest_mip == dest_mip){
-            next_hop = routing_table[i].next_hop;
-          }else if(routing_table[i].dest_mip == BAD_MIP) break;
+        for(j = 0; j < MAX_MIP; j++){
+          if(routing_table[j].dest_mip == dest_mip){
+            next_hop = routing_table[j].next_hop;
+          }else if(routing_table[j].dest_mip == BAD_MIP) break;
         }
 
         if(debug){
@@ -993,13 +1036,15 @@ int main(int argc, char *argv[]){
             fprintf(stdout, "Next hop for destination MIP addres %d is %d\n", dest_mip, next_hop);
           }
           fprintf(stdout, "Responding to MIP daemon.\n");
+          fprintf(stdout, "Forwarding socket: %d\n", events[i].data.fd);
         }
 
-        if(sendmsg(events[i].data.fd,&send_msg,0) == -1){
+        if(sendmsg(events[i].data.fd, &send_msg, 0) == -1){
           perror("main: sendmsg: un_fwd_sock");
           close(un_route_sock);
           close(un_fwd_sock);
           close(signal_fd);
+          free_distance_table(distance_table);
           exit(EXIT_FAILURE);
         }
 
