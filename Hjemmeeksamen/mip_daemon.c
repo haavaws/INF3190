@@ -61,8 +61,10 @@ int main(int argc, char *argv[]){
   /* Packet queue */
   struct packet_queue *first_packet = NULL;
   struct packet_queue *last_packet = first_packet;
+  int num_packet = 0;
   struct packet_queue *first_broadcast_packet = NULL;
   struct packet_queue *last_broadcast_packet = first_broadcast_packet;
+  int num_bpacket = 0;
 
   /* Extra */
   int i,j;
@@ -154,11 +156,13 @@ int main(int argc, char *argv[]){
   else if (un_sock == -2|| un_route_sock == -2 || un_fwd_sock == -2){
     perror("main: setup_unix_socket, bind un_sock");
     close_sockets(sock_container);
+    free_queues(queue_container);
     exit(EXIT_FAILURE);
   }
   else if (un_sock == -3|| un_route_sock == -3 || un_fwd_sock == -3){
     perror("main: setup_unix_socket, listen() un_sock");
     close_sockets(sock_container);
+    free_queues(queue_container);
     exit(EXIT_FAILURE);
   }
 
@@ -168,6 +172,7 @@ int main(int argc, char *argv[]){
   if(num_eth_sds < 0){
     perror("main: setup_eth_sockets");
     close_sockets(sock_container);
+    free_queues(queue_container);
     exit(EXIT_FAILURE);
   }
 
@@ -180,6 +185,7 @@ int main(int argc, char *argv[]){
     fprintf(stderr,"Number of interfaces which require MIP addresses: %d\n",
         num_eth_sds);
     close_sockets(sock_container);
+    free_queues(queue_container);
     exit(EXIT_FAILURE);
   }
 
@@ -188,6 +194,7 @@ int main(int argc, char *argv[]){
   if(signal_fd == -1){
     perror("main: setup_signal_fd");
     close_sockets(sock_container);
+    free_queues(queue_container);
     exit(EXIT_FAILURE);
   }
 
@@ -197,12 +204,13 @@ int main(int argc, char *argv[]){
   if (epfd < 0){
     perror("main: create_epoll_instance():");
     close_sockets(sock_container);
+    free_queues(queue_container);
     exit(EXIT_FAILURE);
   }
 
-  struct epoll_event ep_un_ev = { 0 };
-  struct epoll_event ep_route_ev = { 0 };
-  struct epoll_event ep_fwd_ev = { 0 };
+  struct epoll_event ep_app_conn_ev = { 0 };
+  struct epoll_event ep_route_conn_ev = { 0 };
+  struct epoll_event ep_fwd_conn_ev = { 0 };
 
   /* Poll the sockets for events until a keyboard interrupt is signaled */
   for(;;){
@@ -211,6 +219,7 @@ int main(int argc, char *argv[]){
     if(nfds == -1){
       perror("main: epoll_wait()");
       close_sockets(sock_container);
+      free_queues(queue_container);
       exit(EXIT_FAILURE);
     }
 
@@ -229,6 +238,7 @@ int main(int argc, char *argv[]){
         if(sig_size == 0){
           perror("\nCtrl-d: Received EOF signal from keyboard, stopping\n");
           close_sockets(sock_container);
+          free_queues(queue_container);
           exit(EXIT_SUCCESS);
         }
         if(sig_info.ssi_signo == SIGINT){
@@ -236,6 +246,7 @@ int main(int argc, char *argv[]){
           fprintf(stderr,"\nCtrl-c: Received interrupt from keyboard,"
               "stopping daemon\n");
           close_sockets(sock_container);
+          free_queues(queue_container);
           exit(EXIT_SUCCESS);
         }
         else if(sig_info.ssi_signo == SIGQUIT){
@@ -243,6 +254,7 @@ int main(int argc, char *argv[]){
           fprintf(stderr,"\nCtrl-\\: Received interrupt from keyboard,"
               "stopping daemon\n");
           close_sockets(sock_container);
+          free_queues(queue_container);
           exit(EXIT_SUCCESS);
         }
       }/* Keyboard signal END */
@@ -266,12 +278,13 @@ int main(int argc, char *argv[]){
 
         /* Using EPOLLONESHOT to make sure the socket may only be triggered
         * in the main loop of the MIP daemon */
-        ep_un_ev.events = EPOLLIN | EPOLLONESHOT;
-        ep_un_ev.data.fd = un_sock_conn;
+        ep_app_conn_ev.events = EPOLLIN;
+        ep_app_conn_ev.data.fd = un_sock_conn;
 
-        if(epoll_ctl(epfd, EPOLL_CTL_ADD, un_sock_conn, &ep_un_ev) == -1){
+        if(epoll_ctl(epfd, EPOLL_CTL_ADD, un_sock_conn, &ep_app_conn_ev) == -1){
           perror("main: epoll_ctl(): add un_sock_conn");
           close_sockets(sock_container);
+          free_queues(queue_container);
           exit(EXIT_FAILURE);
         }
       } /* Incoming application connection END */
@@ -291,17 +304,18 @@ int main(int argc, char *argv[]){
             (struct sockaddr *) &un_route_conn_addr, &size_un_route_conn_addr);
 
         if(debug){
-          fprintf(stdout,"Connection to application established.\n\n");
+          fprintf(stdout,"Connection to router on routing socket established.\n\n");
         }
 
         /* Using EPOLLONESHOT to make sure the socket may only be triggered
         * in the main loop of the MIP daemon */
-        ep_route_ev.events = EPOLLIN | EPOLLONESHOT;
-        ep_route_ev.data.fd = un_route_conn;
+        ep_route_conn_ev.events = EPOLLIN;
+        ep_route_conn_ev.data.fd = un_route_conn;
 
-        if(epoll_ctl(epfd, EPOLL_CTL_ADD, un_route_conn, &ep_route_ev) == -1){
+        if(epoll_ctl(epfd, EPOLL_CTL_ADD, un_route_conn, &ep_route_conn_ev) == -1){
           perror("main: epoll_ctl(): add un_route_conn");
           close_sockets(sock_container);
+          free_queues(queue_container);
           exit(EXIT_FAILURE);
         }
 
@@ -323,6 +337,7 @@ int main(int argc, char *argv[]){
         if(sendmsg(un_route_conn,&msg,0) == -1){
           perror("main: sendmsg: un_route_sock");
           close_sockets(sock_container);
+          free_queues(queue_container);
           exit(EXIT_FAILURE);
         }
       } /* Incoming routing connection END */
@@ -342,17 +357,18 @@ int main(int argc, char *argv[]){
           (struct sockaddr *) &un_fwd_conn_addr, &size_un_fwd_conn_addr);
 
         if(debug){
-          fprintf(stdout,"Connection to application established.\n\n");
+          fprintf(stdout,"Connection to router on forwarding socket established.\n\n");
         }
 
         /* Using EPOLLONESHOT to make sure the socket may only be triggered
         * in the main loop of the MIP daemon */
-        ep_fwd_ev.events = EPOLLIN | EPOLLONESHOT;
-        ep_fwd_ev.data.fd = un_fwd_conn;
+        ep_fwd_conn_ev.events = EPOLLIN;
+        ep_fwd_conn_ev.data.fd = un_fwd_conn;
 
-        if(epoll_ctl(epfd, EPOLL_CTL_ADD, un_fwd_conn, &ep_fwd_ev) == -1){
+        if(epoll_ctl(epfd, EPOLL_CTL_ADD, un_fwd_conn, &ep_fwd_conn_ev) == -1){
           perror("main: epoll_ctl(): add un_sock_conn");
           close_sockets(sock_container);
+          free_queues(queue_container);
           exit(EXIT_FAILURE);
         }
       } /* Incoming forwarding connection END */
@@ -363,6 +379,11 @@ int main(int argc, char *argv[]){
       /* Incoming data over IPC from the routing daemon on the routing
       * socket */
       else if(events[i].data.fd == un_route_conn){
+
+        if(debug){
+          fprintf(stdout, "Receiving data on routing socket.\n");
+        }
+
         struct msghdr route_msg = { 0 };
         struct iovec route_iov[2];
 
@@ -384,6 +405,7 @@ int main(int argc, char *argv[]){
         if(ret == -1){
           perror("main: recvmsg: un_route_conn");
           close_sockets(sock_container);
+          free_queues(queue_container);
           exit(EXIT_FAILURE);
         }
         else if(ret == 0){
@@ -397,6 +419,7 @@ int main(int argc, char *argv[]){
               == -1){
             perror("main: epoll_ctl: del un_route_conn");
             close_sockets(sock_container);
+            free_queues(queue_container);
             exit(EXIT_FAILURE);
           }
 
@@ -406,8 +429,8 @@ int main(int argc, char *argv[]){
           /* Rearm the routing socket listening for incoming connections from
            * a router */
           struct epoll_event ep_route_ev = { 0 };
-          ep_un_ev.events = EPOLLIN | EPOLLONESHOT;
-          ep_un_ev.data.fd = un_route_sock;
+          ep_route_ev.events = EPOLLIN | EPOLLONESHOT;
+          ep_route_ev.data.fd = un_route_sock;
 
           epoll_ctl(epfd, EPOLL_CTL_MOD, un_route_sock, &ep_route_ev);
 
@@ -415,9 +438,24 @@ int main(int argc, char *argv[]){
 
         }
 
+        if(debug){
+          for(j = 0; j < MAX_MSG_SIZE; j++){
+            if((uint8_t)((char *) routing_table)[j] == 255){
+              break;
+            }
+          }
+          fprintf(stdout, "Received %ld bytes from router.\n", ret);
+          fprintf(stdout, "Destination for routing data: %d\n", dest_mip);
+          fprintf(stdout, "First instance of 255 in the received data: %d\n", j);
+        }
+
         /* If the destination of the routing update is 255, broadcast the
          * routing table on all network interfaces */
         if(dest_mip == 255){
+
+          if(debug){
+            fprintf(stdout, "Destination was broadcast address, broadcasting routing data.\n");
+          }
           for(j = 0; j < num_eth_sds; j++){
             send_mip_packet(mip_arp_table, local_mip_mac_table, dest_mip,
                 dest_mip, routing_table, ret - 1, 0b010,
@@ -426,6 +464,7 @@ int main(int argc, char *argv[]){
             if(ret == -1){
               perror("main: un_route_conn: broadcast route table");
               close_sockets(sock_container);
+              free_queues(queue_container);
               exit(EXIT_FAILURE);
             }
 
@@ -437,7 +476,15 @@ int main(int argc, char *argv[]){
             }
           }
 
+          if(debug){
+            fprintf(stdout, "Broadcasted to %d nodes.\n", j);
+          }
+
           continue;
+        }
+
+        if(debug){
+          fprintf(stdout, "Sending routing data to MIP address %d\n", dest_mip);
         }
 
         ret = send_mip_packet(mip_arp_table, local_mip_mac_table, dest_mip,
@@ -446,6 +493,7 @@ int main(int argc, char *argv[]){
         if(ret == -1){
           perror("main: send_mip_packet: un_fwd_conn: send_mip_packet");
           close_sockets(sock_container);
+          free_queues(queue_container);
           exit(EXIT_FAILURE);
         }
 
@@ -462,6 +510,24 @@ int main(int argc, char *argv[]){
           if(debug){
             fprintf(stdout,"MIP address %d not in MIP-ARP table.\n",
               dest_mip);
+            fprintf(stdout, "Sending a MIP-ARP broadcast to find the destination.\n");
+          }
+
+          /* Send out a MIP-ARP broadcast to attempt to find the host indicated
+          * by the client */
+          ret = send_mip_broadcast(mip_arp_table, num_eth_sds,
+              local_mip_mac_table, dest_mip, debug);
+
+          if(ret == -1){
+            perror("main: send_mip_broadcast: un_fwd_conn");
+            close_sockets(sock_container);
+            free_queues(queue_container);
+            exit(EXIT_FAILURE);
+          }
+
+          if(debug){
+            fprintf(stdout,"Broadcast sent.\n");
+            fprintf(stdout, "Adding the routing update to the packet queue waiting for broadcast responses.\n");
           }
 
           struct packet_queue *broadcast_packet = (struct packet_queue *)
@@ -482,18 +548,18 @@ int main(int argc, char *argv[]){
             last_broadcast_packet = last_broadcast_packet->next_packet;
           }
 
-          /* Send out a MIP-ARP broadcast to attempt to find the host indicated
-          * by the client */
-          ret = send_mip_broadcast(mip_arp_table, num_eth_sds,
-              local_mip_mac_table, dest_mip, debug);
+          num_bpacket++;
 
-          if(ret == -1){
-            perror("main: send_mip_broadcast: un_fwd_conn");
-            close_sockets(sock_container);
-            exit(EXIT_FAILURE);
+
+          if(debug){
+            fprintf(stdout, "Number of packets waiting for broadcasts: %d\n",num_bpacket);
           }
 
           continue;
+        }
+
+        if(debug){
+          fprintf(stdout, "%ld bytes sent to MIP address %d\n", ret, dest_mip);
         }
       }/* Incoming routing data END */
 
@@ -503,6 +569,11 @@ int main(int argc, char *argv[]){
       /* Incoming data over IPC from the routing daemon on the forwarding
       * socket */
       else if(events[i].data.fd == un_fwd_conn){
+
+        if(debug){
+          fprintf(stdout, "Received data on forward socket.\n");
+        }
+
         struct msghdr fwd_msg = { 0 };
         struct iovec fwd_iov[1];
         uint8_t next_hop;
@@ -518,6 +589,7 @@ int main(int argc, char *argv[]){
         if(ret == -1){
           perror("main: recvmsg: un_fwd_conn");
           close_sockets(sock_container);
+          free_queues(queue_container);
           exit(EXIT_FAILURE);
         }
         else if(ret == 0){
@@ -530,6 +602,7 @@ int main(int argc, char *argv[]){
           if(epoll_ctl(epfd,EPOLL_CTL_DEL,events[i].data.fd,&events[i]) == -1){
             perror("main: epoll_ctl: del un_fwd_conn");
             close_sockets(sock_container);
+            free_queues(queue_container);
             exit(EXIT_FAILURE);
           }
 
@@ -539,8 +612,8 @@ int main(int argc, char *argv[]){
           /* Rearm the forward socket listening for incoming connections from
            * a router */
           struct epoll_event ep_fwd_ev = { 0 };
-          ep_un_ev.events = EPOLLIN | EPOLLONESHOT;
-          ep_un_ev.data.fd = un_fwd_sock;
+          ep_fwd_ev.events = EPOLLIN | EPOLLONESHOT;
+          ep_fwd_ev.data.fd = un_fwd_sock;
 
           epoll_ctl(epfd, EPOLL_CTL_MOD, un_fwd_sock, &ep_fwd_ev);
 
@@ -548,9 +621,59 @@ int main(int argc, char *argv[]){
 
         }
 
+        if(debug){
+          fprintf(stdout, "Received next hop address was %d\n", next_hop);
+          fprintf(stdout, "Checking if received next hop is a local address.\n");
+        }
+
+        /* Check if the packet was inteded for this host */
+        for(j = 0; j < num_eth_sds; j++){
+          if(next_hop == local_mip_mac_table[j].mip_addr){
+            if(debug){
+              fprintf(stdout, "Received next hop address %d was a local MIP address.\n", next_hop);
+            }
+
+            if(un_sock_conn == -1){
+              break;
+            }
+
+            /* TODO: Send to router or application */
+            /* Packet will be a complete MIP transport packet */
+            struct msghdr transport_msg = { 0 };
+            struct iovec transport_iov[2];
+
+            void *payload = ((struct ethernet_frame *) first_packet->buf)->payload.payload;
+
+            transport_iov[0].iov_base = &first_packet->src_mip;
+            transport_iov[0].iov_len = sizeof(first_packet->src_mip);
+
+            transport_iov[1].iov_base = payload;
+            transport_iov[1].iov_len = strlen((char *) payload) + 1;
+
+            transport_msg.msg_iov = transport_iov;
+            transport_msg.msg_iovlen = 2;
+
+            ret = sendmsg(un_sock_conn, &transport_msg, 0);
+
+            if(ret == -1){
+              perror("main: un_fwd_conn: message to application failure");
+              close_sockets(sock_container);
+              free_queues(queue_container);
+              exit(EXIT_FAILURE);
+            }
+
+            break;
+          }
+        }
+        /* If j < num_eth_sds, the packet was sent to the application */
+
         /* If the next hop MIP address received from the router was 255, the
-         * destination has no known route */
-        if(next_hop == 255){
+         * destination has no known route, or the packet was sent to the
+         * connected application */
+        if(next_hop == 255 || j < num_eth_sds){
+          if(debug){
+            fprintf(stdout, "Next hop address was invalid, discard packet.\n");
+          }
           /* Remove the querying packet from the front of the queue of packets
            * waiting for forwarding, and free the data */
           struct packet_queue *tmp = first_packet;
@@ -558,15 +681,25 @@ int main(int argc, char *argv[]){
           if(first_packet == NULL){
             last_packet = first_packet;
           }
+
           free(tmp->buf);
           free(tmp);
+
+          num_packet--;
+
+          if(debug){
+            fprintf(stdout, "Number of packets waiting for forwarding: %d\n", num_packet);
+          }
           continue;
         }
         /* Else, attempt to forward the first packet in the queue */
         else{
+          if(debug){
+            fprintf(stdout, "Forwarding packet with next hop received from router.\n");
+          }
           if(first_packet->is_packet == 1){
             ret = forward_mip_packet(mip_arp_table, local_mip_mac_table,
-                first_packet->next_hop,
+                next_hop,
                 (struct ethernet_frame *) first_packet->buf,
                 first_packet->payload_len, debug);
           }else{
@@ -580,6 +713,7 @@ int main(int argc, char *argv[]){
         if(ret == -1){
           perror("main: un_fwd_conn: forward MIP packet");
           close_sockets(sock_container);
+          free_queues(queue_container);
           exit(EXIT_FAILURE);
         }
 
@@ -596,17 +730,27 @@ int main(int argc, char *argv[]){
           if(debug){
             fprintf(stdout,"Next hop address %d not in MIP-ARP table.\n",
               next_hop);
+            fprintf(stdout, "Sending MIP-ARP broadcast to find destination.\n");
           }
 
           /* Send out a MIP-ARP broadcast to attempt to find the next hop MIP
            * address indicated by the router */
-          ret = send_mip_broadcast(mip_arp_table, num_eth_sds,
-              local_mip_mac_table, next_hop, debug);
+          if(send_mip_broadcast(mip_arp_table, num_eth_sds,
+              local_mip_mac_table, next_hop, debug) == -1){
+            perror("main: send_mip_broadcast: un_fwd_conn");
+            close_sockets(sock_container);
+            free_queues(queue_container);
+            exit(EXIT_FAILURE);
+          }
+
+          if(debug){
+            fprintf(stdout,"Broadcast sent.\n");
+            fprintf(stdout, "Moving packet to packet queue waiting for broadcast responses.\n");
+          }
 
 
-          /* Remove the packet from the front of the queue of packets awaiting
-           * forwarding and add it to the queue of packets awaiting a broadcast
-           * response */
+          /* Move the packet from the queue of packets awaiting forwarding to
+           * the queue of packets awaiting a broadcast response */
           first_packet->next_hop = next_hop;
 
           if(first_broadcast_packet == NULL){
@@ -620,13 +764,21 @@ int main(int argc, char *argv[]){
           first_packet = first_packet->next_packet;
           if(first_packet == NULL) last_packet = NULL;
 
-          if(ret == -1){
-            perror("main: send_mip_broadcast: un_fwd_conn");
-            close_sockets(sock_container);
-            exit(EXIT_FAILURE);
+          num_packet--;
+          num_bpacket++;
+
+
+          if(debug){
+            fprintf(stdout,"Current number in forward queue: %d\n", num_packet);
+            fprintf(stdout, "Current number in broadcast queue: %d\n",num_bpacket);
           }
 
           continue;
+        }
+
+        if(debug){
+          fprintf(stdout,"%ld bytes sent to destination %d\n", ret, next_hop);
+          fprintf(stdout, "Removing packet from packet queue.\n");
         }
 
         /* If the packet was successfully forwarded, remove the packet from the
@@ -638,6 +790,11 @@ int main(int argc, char *argv[]){
         }
         free(tmp->buf);
         free(tmp);
+        num_packet--;
+
+        if(debug){
+          fprintf(stdout,"Number of packets in queue: %d\n", num_packet);
+        }
 
       }/* Incoming forwarding data END */
 
@@ -646,6 +803,9 @@ int main(int argc, char *argv[]){
 
       /* Incoming data over IPC from connected application */
       else if(events[i].data.fd == un_sock_conn){
+        if(debug){
+          fprintf(stdout,"Incoming data from application.\n");
+        }
 
         /* Unix communication based on code from group session
          * https://github.uio.no/persun/inf3190/tree/master/plenum3 */
@@ -671,6 +831,7 @@ int main(int argc, char *argv[]){
         if(ret == -1){
           perror("main: recvmsg: un_sock_conn");
           close_sockets(sock_container);
+          free_queues(queue_container);
           exit(EXIT_FAILURE);
         }
         /* Application has terminated the connection to the MIP daemon */
@@ -684,6 +845,7 @@ int main(int argc, char *argv[]){
           if(epoll_ctl(epfd,EPOLL_CTL_DEL,events[i].data.fd,&events[i]) == -1){
             perror("main: epoll_ctl: del un_sock_conn");
             close_sockets(sock_container);
+            free_queues(queue_container);
             exit(EXIT_FAILURE);
           }
 
@@ -706,10 +868,30 @@ int main(int argc, char *argv[]){
           fprintf(stdout,"Received %ld bytes from client:\n",ret);
           fprintf(stdout,"Destination MIP address: %d\n",dest_mip_addr);
           fprintf(stdout,"Message: \"%s\"\n\n",msg_buf);
-          fprintf(stdout,"Sending packet.\n");
+          fprintf(stdout,"Requesting next hop for destination from router.\n");
+        }
+
+        struct msghdr lookup_msg = { 0 };
+        struct iovec lookup_iov[1];
+
+        lookup_iov[0].iov_base = &dest_mip_addr;
+        lookup_iov[0].iov_len = sizeof(dest_mip_addr);
+
+        lookup_msg.msg_iov = lookup_iov;
+        lookup_msg.msg_iovlen = 1;
+
+        if(sendmsg(un_fwd_conn, &lookup_msg, 0) == -1){
+          perror("main: sendmsg: un_sock_conn");
+          close_sockets(sock_container);
+          free_queues(queue_container);
+          exit(EXIT_FAILURE);
         }
 
         if(debug) print_arp_table(mip_arp_table);
+
+        if(debug){
+          fprintf(stdout, "Adding packet to packet queue awaiting forward response from router.\n");
+        }
 
         /* TODO: FREE */
         struct packet_queue *packet = (struct packet_queue *)
@@ -728,20 +910,10 @@ int main(int argc, char *argv[]){
           last_packet->next_packet = packet;
           last_packet = last_packet->next_packet;
         }
+        num_packet++;
 
-        struct msghdr lookup_msg = { 0 };
-        struct iovec lookup_iov[1];
-
-        lookup_iov[0].iov_base = &dest_mip_addr;
-        lookup_iov[0].iov_len = sizeof(dest_mip_addr);
-
-        lookup_msg.msg_iov = lookup_iov;
-        lookup_msg.msg_iovlen = 1;
-
-        if(sendmsg(un_fwd_sock, &lookup_msg, 0) == -1){
-          perror("main: sendmsg: un_sock_conn");
-          close_sockets(sock_container);
-          exit(EXIT_FAILURE);
+        if(debug){
+          fprintf(stdout, "Number of packets in queue: %d\n", num_packet);
         }
 
       } /* Communication over IPC with connected application END */
@@ -750,35 +922,60 @@ int main(int argc, char *argv[]){
 
       /* Incoming data over ethernet */
       else{
+
+        if(debug){
+          fprintf(stdout, "Receiving data over ethernet.\n");
+        }
         /* The source MIP address of the received packet will be stored in
         * src_mip, and the message will be stored in buf */
         ret = recv_mip_packet(mip_arp_table, events[i].data.fd, sock_container,
-            queue_container, debug);
+            queue_container, debug, &num_packet, &num_bpacket);
 
         if(ret == -1){
           perror("main: recv: eth socket");
           close_sockets(sock_container);
+          free_queues(queue_container);
           exit(EXIT_FAILURE);
         }
         /* The received packet was not intended for this host */
         else if(ret == -2){
+
+          if(debug){
+            fprintf(stdout, "Received packet was not intended for this host. Discarding it.\n");
+          }
           /* Discard it */
           continue;
         }
-        /* Error when sending forward request to router */
+        /* The received packet needed to be forwarded, but no router was
+         * was connected to handle forwarding */
         else if(ret == -3){
+          if(debug){
+            fprintf(stdout, "Received packet needed to be forwarded, but no router was connected to handle forwarding.\n");
+          }
+        }
+        /* The received packet needed to be forwarded, but the its TTL reached
+         * -1 */
+        else if(ret == -4){
+          if(debug){
+            fprintf(stdout, "Received packet needed to be forwarded, but its TTL reached -1.\n");
+          }
+        }
+        /* Error when sending forward request to router */
+        else if(ret == -5){
           perror("main: recv_eth: forward failure");
           close_sockets(sock_container);
+          free_queues(queue_container);
           exit(EXIT_FAILURE);
         }
         /* Error when attempting to forward packets waiting for a broadcast */
-        else if(ret == -4){
+        else if(ret == -6){
           perror("main: recv_eth: broadcast forward failure");
           close_sockets(sock_container);
+          free_queues(queue_container);
           exit(EXIT_FAILURE);
         }
         /* No connected application to receive transport packet */
-        else if(ret == -5){
+        else if(ret == -7){
           if(debug){
             fprintf(stdout, "No application connected. Discarding packet.\n");
           }
@@ -787,13 +984,14 @@ int main(int argc, char *argv[]){
         }
         /* Error when attempting to send message from transport packet to
          * connected application */
-        else if(ret == -6){
+        else if(ret == -8){
           perror("main: recv_eth: message to application failure");
           close_sockets(sock_container);
+          free_queues(queue_container);
           exit(EXIT_FAILURE);
         }
         /* No router connected to receive routing packet */
-        else if(ret == -7){
+        else if(ret == -9){
           if(debug){
             fprintf(stdout, "No routing daemon connected. Discarding "
                 "packet\n");
@@ -802,9 +1000,17 @@ int main(int argc, char *argv[]){
         }
         /* Error when attempting to send data from routing packet to connected
          * router */
-        else if(ret == -8){
+        else if(ret == -10){
           perror("main: recv_eth: data to router failure");
           close_sockets(sock_container);
+          free_queues(queue_container);
+          exit(EXIT_FAILURE);
+        }
+        /* Error when attempting to respond to MIP-ARP broadcast */
+        else if(ret == -11){
+          perror("main: recv_eth: MIP-ARP response failure");
+          close_sockets(sock_container);
+          free_queues(queue_container);
           exit(EXIT_FAILURE);
         }
 
