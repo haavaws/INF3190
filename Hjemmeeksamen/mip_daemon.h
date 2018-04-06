@@ -95,6 +95,8 @@ int setup_eth_sockets(struct mip_arp_entry *local_mip_mac_table,
 
 int setup_signal_fd();
 
+int new_connection(int un_sock, int epfd);
+
 int create_epoll_instance(struct sockets sock_container);
 
 
@@ -124,16 +126,32 @@ ssize_t send_mip_packet(struct mip_arp_entry *arp_table,
   uint8_t next_hop, void* payload, int payload_len, uint8_t tra, int send_sd,
   int debug);
 
-int forward_mip_packet(struct mip_arp_entry *arp_table,
+int send_complete_packet(struct mip_arp_entry *arp_table,
     struct mip_arp_entry *local_mip_mac_table, uint8_t next_hop,
     struct ethernet_frame *frame, int frame_size, int debug);
-
-int recv_mip_packet(struct mip_arp_entry *mip_arp_table, int socket,
-    struct sockets sock_container, struct packet_queues queue_container,
-    int debug, int *num_packet, int *num_bpacket);
 
 int send_mip_broadcast(struct mip_arp_entry *mip_arp_table,
   int num_eth_sds, struct mip_arp_entry *local_mip_mac_table, uint8_t dest_mip,
   int debug);
+
+int recv_mip_packet(struct mip_arp_entry *mip_arp_table, int socket,
+    struct sockets sock_container, struct packet_queues queue_container,
+    int debug);
+
+int send_route_update(int epfd, struct sockets socks,
+    struct packet_queues queues, struct mip_arp_entry *mip_arp_table,
+    int debug);
+
+int forward_mip_packet(int epfd, struct sockets socks,
+    struct packet_queues queues, struct mip_arp_entry *mip_arp_table,
+    int debug);
+
+int recv_app_msg(int epfd, struct sockets socks, struct packet_queues queues,
+    int debug);
+
+int keyboard_signal(int signal_fd);
+
+int init_router(int un_route_conn, struct mip_arp_entry *local_mip_mac_table,
+    int num_mips);
 
 #endif
