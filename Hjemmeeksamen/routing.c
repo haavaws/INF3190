@@ -13,6 +13,28 @@
 
 
 /**
+ * Prints usage information to stderr for the user
+ *
+ * @param file_name Filename of the user executed, argv[0]
+ * @return          none
+ */
+void print_help(char *file_name){
+  fprintf(stderr,"USAGE: %s [-h] [-d] <Socket_route> <Socket_forwarding>\n",
+    file_name);
+  fprintf(stderr,"[-h]: optional help argument\n");
+  fprintf(stderr,"[-d]: optional debug argument, prints debugging "
+    "information\n");
+  fprintf(stderr,"<Socket_route>: name of socket for IPC of routing data with "
+    "the MIP daemon\n");
+  fprintf(stderr,"<Socket_forwarding>: name of socket for IPC of forwarding "
+    "lookup with the MIP daemon\n");
+  exit(EXIT_FAILURE);
+}
+
+
+
+
+/**
  * Prints the destination MIPs in the provided routing table.
  *
  * @param routing_table   The routing table whose destinations are to be
@@ -44,7 +66,8 @@ void close_sockets(struct sockets socks, int free_path){
   /* Closes the sockets in socks */
   struct sockaddr_un un_route_addr = { 0 };
   socklen_t route_addrlen = sizeof(un_route_addr);
-  getsockname(*socks.un_route_sock, (struct sockaddr*) &un_route_addr, &route_addrlen);
+  getsockname(*socks.un_route_sock, (struct sockaddr*) &un_route_addr,
+      &route_addrlen);
   close(*socks.un_route_sock);
 
   /* Unlink if specified */
@@ -144,7 +167,8 @@ int init_routing_data(struct sockets socks, struct routing_data rd, int debug){
   }
 
   if(debug){
-    fprintf(stdout, "Received %d bytes of data from MIP daemon.\n", num_local_mips);
+    fprintf(stdout, "Received %d bytes of data from MIP daemon.\n",
+        num_local_mips);
     fprintf(stdout, "Local MIP addresses received:\n");
   }
 
@@ -314,17 +338,21 @@ int clean_dist_route(struct routing_data rd, time_t now){
         /* Remove the entries for the neighbour and resort the values for next
          * hop, cost and timestamp */
         for(k = i; k < *rd.num_neighbours-1; k++){
-          rd.distance_table[j].next_hop[k] = rd.distance_table[j].next_hop[k+1];
+          rd.distance_table[j].next_hop[k] =
+              rd.distance_table[j].next_hop[k+1];
           rd.distance_table[j].cost[k] = rd.distance_table[j].cost[k+1];
-          rd.distance_table[j].timestamp[k] = rd.distance_table[j].timestamp[k+1];
+          rd.distance_table[j].timestamp[k] =
+              rd.distance_table[j].timestamp[k+1];
         }
 
         /* Reallocate memory */
         rd.distance_table[j].next_hop =
-          (uint8_t *) realloc(rd.distance_table[j].next_hop, *rd.num_neighbours - 1);
+          (uint8_t *) realloc(rd.distance_table[j].next_hop,
+              *rd.num_neighbours - 1);
 
         rd.distance_table[j].cost =
-          (uint8_t *) realloc(rd.distance_table[j].cost, *rd.num_neighbours - 1);
+          (uint8_t *) realloc(rd.distance_table[j].cost,
+              *rd.num_neighbours - 1);
 
         rd.distance_table[j].timestamp =
           (time_t *) realloc(rd.distance_table[j].timestamp,
@@ -951,7 +979,8 @@ int recv_routing_update(struct sockets socks, struct routing_data rd,
   }
 
   if(debug){
-    fprintf(stdout, "Received %ld bytes from MIP daemon on routing socket, with source MIP %d.\n", ret, src_mip);
+    fprintf(stdout, "Received %ld bytes from MIP daemon on routing socket, "
+        "with source MIP %d.\n", ret, src_mip);
   }
 
   /* Check if the source is a new neighbour, and add the neighbour if it is */
@@ -967,7 +996,8 @@ int recv_routing_update(struct sockets socks, struct routing_data rd,
     clean_dist_route(rd, now);
 
     if(debug){
-      fprintf(stdout, "Routing table was updated, sending update to neighbours.\n");
+      fprintf(stdout, "Routing table was updated, sending update to "
+          "neighbours.\n");
       print_routing_table(rd.routing_table);
       print_neighbours(rd.neighbours, *rd.num_neighbours);
     }
@@ -1034,7 +1064,8 @@ int recv_fwd_req(struct sockets socks, struct routing_data rd, time_t now,
   }
 
   if(debug){
-    fprintf(stdout, "Received request for next hop for destination MIP %d\n", dest_mip);
+    fprintf(stdout, "Received request for next hop for destination MIP %d\n",
+        dest_mip);
   }
 
   struct msghdr send_msg = { 0 };
@@ -1054,7 +1085,8 @@ int recv_fwd_req(struct sockets socks, struct routing_data rd, time_t now,
    * hop for the route */
   if(clean_dist_route(rd, now) == 1){
     if(debug){
-      fprintf(stdout, "Routing table was updated while cleaning before responding to forwarding request. Sending update to neighbours.\n");
+      fprintf(stdout, "Routing table was updated while cleaning before "
+          "responding to forwarding request. Sending update to neighbours.\n");
       print_routing_table(rd.routing_table);
       print_neighbours(rd.neighbours, *rd.num_neighbours);
     }
@@ -1100,4 +1132,4 @@ int recv_fwd_req(struct sockets socks, struct routing_data rd, time_t now,
   }
 
   return next_hop;
-}
+} /* recv_fwd_req() END */
