@@ -13,7 +13,7 @@
 
 
 int main(int argc, char *argv[]){
-  char const *usage = "./routing_daemon [-d] <Socket_route> "
+  char const *usage = "./routing_daemon [-h] [-d] <Socket_route> "
       "<Socket_forwarding>";
 
   struct routing_data routing_data_container = { 0 };
@@ -69,6 +69,12 @@ int main(int argc, char *argv[]){
 
 
   if(argc<3){
+    if(argc>1){
+      if(strcmp(argv[1],"-h") == 0){
+        print_help(argv[0]);
+        exit(EXIT_SUCCESS);
+      }
+    }
     fprintf(stderr,"USAGE: %s\n",usage);
     exit(EXIT_FAILURE);
   }
@@ -87,8 +93,11 @@ int main(int argc, char *argv[]){
     fwd_sock_ind++;
 
     if(debug){
-      fprintf(stdout, "-------------------Debug mode activated.--------------------\n");
+      fprintf(stdout, "--------------Debug mode activated.----------------\n");
     }
+  }else if(strcmp(argv[1],"-h") == 0){
+    print_help(argv[0]);
+    exit(EXIT_SUCCESS);
   }
 
   /* Create the unix sockets for communication with the MIP daemon, as well as
@@ -112,7 +121,8 @@ int main(int argc, char *argv[]){
   }
 
   /* Initialize routing tables */
-  num_local_mips = init_routing_data(sock_container, routing_data_container, debug);
+  num_local_mips = init_routing_data(sock_container, routing_data_container,
+      debug);
 
   if(num_local_mips == -1){
     perror("main: init_routing_data");
@@ -125,7 +135,8 @@ int main(int argc, char *argv[]){
   }
 
   for(;;){
-    timeout = scheduled_update(sock_container, routing_data_container, now, debug);
+    timeout = scheduled_update(sock_container, routing_data_container, now,
+        debug);
 
     if(timeout == -1){
       perror("main: scheduled_update");
@@ -158,7 +169,8 @@ int main(int argc, char *argv[]){
       /* If a data was received on the routing socket */
       if(events[i].data.fd == un_route_sock){
 
-        ret = recv_routing_update(sock_container, routing_data_container, now, debug);
+        ret = recv_routing_update(sock_container, routing_data_container, now,
+            debug);
 
         if(ret == -1){
           perror("main: recv_routing_update");
