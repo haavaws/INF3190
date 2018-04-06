@@ -432,7 +432,7 @@ int send_complete_packet(struct mip_arp_entry *arp_table,
 
   return ret;
 
-}/* forward_mip_packet() END */
+}/* send_complete_packet() END */
 
 
 
@@ -579,7 +579,8 @@ int recv_mip_packet(struct mip_arp_entry *mip_arp_table, int socket,
     /* The destination MAC address in the ethernet header did not match the
      * MAC address of the receiving interface */
      if(debug){
-       fprintf(stdout, "Received packet was not intended for this host. Discarding it.\n");
+       fprintf(stdout, "Received packet was not intended for this host. "
+          "Discarding it.\n");
      }
      free(eth_buf);
      return -2;
@@ -591,7 +592,8 @@ int recv_mip_packet(struct mip_arp_entry *mip_arp_table, int socket,
     /* If there is no connected router, discard the packet */
     if(*sock_container.un_fwd_conn == -1){
       if(debug){
-        fprintf(stdout, "Received packet needed to be forwarded, but no router was connected to handle forwarding.\n");
+        fprintf(stdout, "Received packet needed to be forwarded, but no "
+            "router was connected to handle forwarding.\n");
       }
       free(eth_buf);
       return -3;
@@ -605,7 +607,8 @@ int recv_mip_packet(struct mip_arp_entry *mip_arp_table, int socket,
     if(mip_ttl == 0){
       /* Discard the packet */
       if(debug){
-        fprintf(stdout, "Received packet needed to be forwarded, but its TTL reached -1.\n");
+        fprintf(stdout, "Received packet needed to be forwarded, but its TTL "
+            "reached -1.\n");
       }
       free(eth_buf);
       return -4;
@@ -629,7 +632,8 @@ int recv_mip_packet(struct mip_arp_entry *mip_arp_table, int socket,
     }
 
     if(debug){
-      fprintf(stdout, "Sent forward request for destination %d to router.\n", dest_mip);
+      fprintf(stdout, "Sent forward request for destination %d to router.\n",
+          dest_mip);
     }
 
 
@@ -674,7 +678,8 @@ int recv_mip_packet(struct mip_arp_entry *mip_arp_table, int socket,
       if(packet->next_hop == src_mip){
 
         if(debug){
-          fprintf(stdout, "Packet with next hop %d can now be forwarded.\n", src_mip);
+          fprintf(stdout, "Packet with next hop %d can now be forwarded.\n",
+              src_mip);
         }
 
         /* If the packet is an entire packet received from another node, to be
@@ -942,7 +947,8 @@ int send_route_update(int epfd, struct sockets socks,
     ep_route_ev.events = EPOLLIN | EPOLLONESHOT;
     ep_route_ev.data.fd = *socks.un_route_sock;
 
-    if(epoll_ctl(epfd, EPOLL_CTL_MOD, *socks.un_route_sock, &ep_route_ev) == -1){
+    if(epoll_ctl(epfd, EPOLL_CTL_MOD, *socks.un_route_sock, &ep_route_ev)
+        == -1){
       return -1;
     }
 
@@ -1040,7 +1046,8 @@ int send_route_update(int epfd, struct sockets socks,
       *queues.last_broadcast_packet = *queues.first_broadcast_packet;
     }else {
       (*queues.last_broadcast_packet)->next_packet = broadcast_packet;
-      *queues.last_broadcast_packet = (*queues.last_broadcast_packet)->next_packet;
+      *queues.last_broadcast_packet =
+          (*queues.last_broadcast_packet)->next_packet;
     }
 
     return 0;
@@ -1050,7 +1057,7 @@ int send_route_update(int epfd, struct sockets socks,
 
   return ret;
 
-}
+} /* send_route_update() END */
 
 
 
@@ -1173,7 +1180,8 @@ int forward_mip_packet(int epfd, struct sockets socks,
       struct msghdr transport_msg = { 0 };
       struct iovec transport_iov[2];
 
-      void *payload = ((struct ethernet_frame *) (*queues.first_packet)->buf)->payload.payload;
+      void *payload = ((struct ethernet_frame *)
+          (*queues.first_packet)->buf)->payload.payload;
 
       transport_iov[0].iov_base = &(*queues.first_packet)->src_mip;
       transport_iov[0].iov_len = sizeof((*queues.first_packet)->src_mip);
@@ -1204,7 +1212,8 @@ int forward_mip_packet(int epfd, struct sockets socks,
    * connected application */
   if(next_hop == 255 || i < *socks.num_eth_sds){
     if(debug){
-      if(next_hop == 255) fprintf(stdout, "Next hop address was invalid, discard packet.\n");
+      if(next_hop == 255) fprintf(stdout, "Next hop address was invalid, "
+          "discard packet.\n");
     }
     /* Remove the querying packet from the front of the queue of packets
      * waiting for forwarding, and free the data */
@@ -1228,7 +1237,8 @@ int forward_mip_packet(int epfd, struct sockets socks,
           (*queues.first_packet)->payload_len, debug);
     }else{
       ret = send_mip_packet(mip_arp_table, socks.local_mip_mac_table,
-          (*queues.first_packet)->dest_mip, next_hop, (*queues.first_packet)->buf,
+          (*queues.first_packet)->dest_mip, next_hop,
+          (*queues.first_packet)->buf,
           strlen((char *) (*queues.first_packet)->buf) + 1, 0b100, 0, debug);
     }
   }
@@ -1269,7 +1279,8 @@ int forward_mip_packet(int epfd, struct sockets socks,
       *queues.last_broadcast_packet = *queues.first_broadcast_packet;
     }else {
       (*queues.last_broadcast_packet)->next_packet = *queues.first_packet;
-      *queues.last_broadcast_packet = (*queues.last_broadcast_packet)->next_packet;
+      *queues.last_broadcast_packet =
+          (*queues.last_broadcast_packet)->next_packet;
     }
 
     *queues.first_packet = (*queues.first_packet)->next_packet;
@@ -1290,7 +1301,7 @@ int forward_mip_packet(int epfd, struct sockets socks,
 
   return ret;
 
-}
+} /* forward_mip_packet() END */
 
 
 
@@ -1429,7 +1440,7 @@ int recv_app_msg(int epfd, struct sockets socks, struct packet_queues queues,
   }
 
   return ret;
-}
+} /* recv_app_msg() END */
 
 
 
@@ -1467,7 +1478,7 @@ int keyboard_signal(int signal_fd){
 
   return 1;
 
-}
+}/* keyboard_signal() END */
 
 
 
@@ -1517,4 +1528,4 @@ int init_router(int un_route_conn, struct mip_arp_entry *local_mip_mac_table,
   }
 
   return 0;
-}
+} /* init_router() END */
