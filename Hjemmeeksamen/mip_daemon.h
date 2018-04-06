@@ -46,33 +46,47 @@ struct ethernet_frame {
 } __attribute__((packed));
 
 struct sockets {
+  /* Socket listening for connections from applications */
   int *un_sock;
+  /* Socket listening for conncetions from routers on routing socket */
   int *un_route_sock;
+  /* Socket listening for connections from routers on forwarding socket */
   int *un_fwd_sock;
+  /* Connected application socket */
   int *un_sock_conn;
+  /* Connected routing socket */
   int *un_route_conn;
+  /* Connected forwarding socket */
   int *un_fwd_conn;
+  /* Signal handler */
   int *signal_fd;
+  /* Local mip addresses and their sockets */
   struct mip_arp_entry *local_mip_mac_table;
+  /* Number of local MIP addresses */
   int *num_eth_sds;
 };
 
+/* Container for holding the packet queues awaiting forwarding and broadcast
+ * responses */
 struct packet_queues {
+  /* Packets awaiting forwarding response */
   struct packet_queue **first_packet;
   struct packet_queue **last_packet;
+  /* Packets awaiting broadcast response */
   struct packet_queue **first_broadcast_packet;
   struct packet_queue **last_broadcast_packet;
 };
 
+/* Packet in the packet queue */
 struct packet_queue{
-  int is_packet;
-  void *buf;
-  uint8_t dest_mip;
-  uint8_t src_mip;
-  struct packet_queue *next_packet;
-  uint8_t next_hop;
-  int payload_len;
-  uint8_t tra;
+  int is_packet; /* Is it a whole packet or only the payload */
+  void *buf; /* Buffer for holding the packet/payload */
+  uint8_t dest_mip; /* The destination to send the payload */
+  uint8_t src_mip; /* The source of the packet */
+  struct packet_queue *next_packet; /* Next packet in the queue */
+  uint8_t next_hop; /* Next hop for packets awaiting broadcast response */
+  int payload_len; /* Length of either the entire packet or the payload */
+  uint8_t tra; /* Type of packet */
 };
 
 /* Functions are documented where they are defined */
