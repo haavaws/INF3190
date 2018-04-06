@@ -236,10 +236,18 @@ int setup_eth_sockets(struct mip_arp_entry *local_mip_mac_table,
 } /* setup_eth_sockets END */
 
 
+
+/**
+ * Creates a signal handler which can be used to handle keyboard interrupts
+ * when waiting for events in the epoll instance
+ *
+ * @returns       Returns a descriptor for a signal handler on success and -1
+ *                on error.
+ */
 int setup_signal_fd(){
+  /* Create a signal handler to be used when waiting for the epoll instance */
   int signal_fd;
 
-  /* Add a keyboard interrupt signal handler for the epoll instance */
   sigset_t mask;
 
   sigemptyset(&mask);
@@ -254,6 +262,40 @@ int setup_signal_fd(){
   }
 
   return signal_fd;
+}
+
+
+
+/**
+ * Handles an incoming connection on the supplied socket, creates a new
+ * connected socket and adds it to the supplied epoll instance.
+ *
+ * @param un_sock Socket which received a new connection.
+ * @param epfd    File descriptor for epoll instance to add the new connected
+ *                socket to.
+ * @returns       Returns the socket descriptor for the new connected socket
+ *                on success, and -1 on error.
+ */
+int new_connection(int un_sock, int epfd){
+  int un_sock_conn;
+  struct sockaddr_un un_sock_conn_addr = { 0 };
+  socklen_t size_un_sock_conn_addr = sizeof(un_sock_conn_addr);
+
+  /* Accept and return the socket */
+  un_sock_conn = accept(un_sock, (struct sockaddr *) &un_sock_conn_addr,
+      &size_un_sock_conn_addr);
+
+  /* Add the socket to the epoll instance */
+  struct epoll_event ep_conn_ev = { 0 };
+  ep_conn_ev.events = EPOLLIN;
+  ep_conn_ev.data.fd = un_sock_conn;
+
+  if(epoll_ctl(epfd, EPOLL_CTL_ADD, un_sock_conn, &ep_conn_ev) == -1){
+    fprintf(stdout,"EPOLL_FAILURE");
+    return -1;
+  }
+
+  return un_sock_conn;
 }
 
 
