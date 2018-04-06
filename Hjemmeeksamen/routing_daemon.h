@@ -21,19 +21,29 @@ struct routing_table_entry{
 
 struct distance_table_entry{
   uint8_t dest_mip;
+  /* Will have one member per neighbour */
   uint8_t *next_hop;
   uint8_t *cost;
   time_t *timestamp;
 };
 
 struct routing_data{
+  /* Routing table of the router */
   struct routing_table_entry *routing_table;
+  /* Distance table of the router */
   struct distance_table_entry *distance_table;
+  /* The last time an update was received from a neighbour corresponding to the
+   * neighbours array */
   time_t *last_neighbour_update;
+  /* The local mip addresses supplied by the MIP daemon */
   uint8_t *local_mips;
+  /* Number of local mip addresses */
   int *num_local_mips;
+  /* Current neighbours */
   uint8_t *neighbours;
+  /* Number of current neighbours */
   int *num_neighbours;
+  /* Last time an update was sent */
   time_t *last_update_timestamp;
 
 };
@@ -45,6 +55,8 @@ struct sockets{
 };
 
 /* Functions declared in routing.c */
+void print_help(char *file_name);
+
 void print_rout_dest(struct routing_table_entry *routing_table);
 
 void close_sockets(struct sockets socks, int free_path);
