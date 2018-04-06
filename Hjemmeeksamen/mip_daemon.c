@@ -129,7 +129,7 @@ int main(int argc, char *argv[]){
     char *endptr;
     long int check = strtol(argv[mip_start_ind+i],&endptr,10);
     if(*endptr != '\0' || argv[mip_start_ind+i][0] == '\0'
-        || check > 255 || check < 0){
+        || check > 254 || check < 0){
       print_help(argv[0]);
       exit(EXIT_FAILURE);
     }
@@ -259,7 +259,8 @@ int main(int argc, char *argv[]){
         }
 
         if(debug){
-          fprintf(stdout,"Connection to router established on routing socket.\n\n");
+          fprintf(stdout,"Connection to router established on routing "
+              "socket.\n\n");
         }
 
         printf("num_eth_sds: %d\n",num_eth_sds);
@@ -286,14 +287,16 @@ int main(int argc, char *argv[]){
         }
 
         if(debug){
-          fprintf(stdout,"Connection to router established on forwarding socket.\n\n");
+          fprintf(stdout,"Connection to router established on forwarding "
+              "socket.\n\n");
         }
       }
 
       /* Incoming data over IPC from the routing daemon on the routing
       * socket */
       else if(events[i].data.fd == un_route_conn){
-        ret = send_route_update(epfd, sock_container, queue_container, mip_arp_table, debug);
+        ret = send_route_update(epfd, sock_container, queue_container,
+            mip_arp_table, debug);
 
         if(ret == -1){
           perror("main: send_route_update");
@@ -306,7 +309,8 @@ int main(int argc, char *argv[]){
       /* Incoming data over IPC from the routing daemon on the forwarding
       * socket */
       else if(events[i].data.fd == un_fwd_conn){
-        ret = forward_mip_packet(epfd, sock_container, queue_container, mip_arp_table, debug);
+        ret = forward_mip_packet(epfd, sock_container, queue_container,
+            mip_arp_table, debug);
         if(ret == -1){
           perror("main: forward_mip_packet");
           close_sockets(sock_container);
