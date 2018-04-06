@@ -12,7 +12,7 @@
 /* maximum size of a MIP message, not including headers */
 #define MAX_MSG_SIZE 1496
 /* timeout to wait for PONG message in milliseconds */
-#define PONG_TIMEOUT_US 500
+#define PONG_TIMEOUT_MS 500
 
 /* Based on code from group session
 * https://github.uio.no/persun/inf3190/tree/master/plenum3 */
@@ -43,7 +43,8 @@ int main(int argc, char* argv[]){
     fprintf(stderr,"USAGE: %s [-h] <destination_host> <message> "
         "<Socket_application>\n",argv[0]);
     fprintf(stderr,"[-h]: optional help argument\n");
-    fprintf(stderr,"<destination_host>: MIP addresses of ping target\n");
+    fprintf(stderr,"<destination_host>: MIP addresses of ping target, in the "
+        "form of a number between 0 and 254\n");
     fprintf(stderr,"<message>: message to send along with ping\n");
     fprintf(stderr,"<Socket_application>: name of socket for IPC with "
         "daemon\n");
@@ -54,14 +55,14 @@ int main(int argc, char* argv[]){
   char *endptr;
   dest_mip = strtol(argv[1],&endptr,10);
   if(*endptr != '\0' || argv[1][0] == '\0' || dest_mip > 255 || dest_mip < 0){
-    fprintf(stderr,"USAGE: %s [-h] <Socket_application> [MIP addresses ...]\n",
-        argv[0]);
+    fprintf(stderr,"USAGE: %s [-h] <destination_host> <message> "
+        "<Socket_application>\n",argv[0]);
     fprintf(stderr,"[-h]: optional help argument\n");
+    fprintf(stderr,"<destination_host>: MIP addresses of ping target, in the "
+        "form of a number between 0 and 254\n");
+    fprintf(stderr,"<message>: message to send along with ping\n");
     fprintf(stderr,"<Socket_application>: name of socket for IPC with "
-        "application\n");
-    fprintf(stderr,"[MIP addresses ...]: one unique MIP address per interface "
-        "with a unique MAC address, in the form of a number between 0 and "
-        "255\n");
+        "daemon\n");
     exit(EXIT_FAILURE);
   }
 
@@ -79,8 +80,8 @@ int main(int argc, char* argv[]){
   }
 
   /* Set timeout for the socket */
-  if(PONG_TIMEOUT_US >= 1000) timeout.tv_sec = PONG_TIMEOUT_US / 1000;
-  timeout.tv_usec = PONG_TIMEOUT_US * 1000 - timeout.tv_sec * 1000;
+  if(PONG_TIMEOUT_MS >= 1000) timeout.tv_sec = PONG_TIMEOUT_MS / 1000;
+  timeout.tv_usec = PONG_TIMEOUT_MS * 1000 - timeout.tv_sec * 1000;
   setsockopt(un_sock, SOL_SOCKET, SO_RCVTIMEO, &timeout,
       sizeof(struct timeval));
 
@@ -122,6 +123,7 @@ int main(int argc, char* argv[]){
 
   /* Wait for ping */
   for(;;){
+    /* Receive message from MIP daemon */
     char pong_msg[MAX_MSG_SIZE] = { 0 };
     struct msghdr pong_msghdr = { 0 };
     struct iovec iov_pong[2];
@@ -157,27 +159,28 @@ int main(int argc, char* argv[]){
       exit(EXIT_FAILURE);
     }
 
-    fprintf(stdout,"Received PONG response:\n\"%s\"\n\n",ping_msg);
+    fprintf(stdout,"Received message:\n\"%s\"\n\n",ping_msg);
     fprintf(stdout, "From host: %d\n",src_mip);
-
-    /* Calculate how much time has been spent waiting */
-    gettimeofday(&ping_end,NULL);
-
-    /* Time in microseconds */
-    latency_s = ping_end.tv_sec - ping_start.tv_sec;
-    if(latency_s > 0){
-      latency_us = (1000000 - ping_start.tv_usec) + ping_end.tv_usec;
-    }else latency_us = ping_end.tv_usec - ping_start.tv_usec;
 
     /* Received PONG response */
     if(strcmp("PONG",pong_msg) == 0){
       /* Can't verify that the source is the same as the destination, because
        * the destination may have responded with a different MIP address as the
        * sourec */
+      fprintf(stdout, "Message was PONG response\n");
       break;
     }
 
   }
+
+  /* Calculate how much time has been spent waiting */
+  gettimeofday(&ping_end,NULL);
+
+  /* Time in microseconds */
+  latency_s = ping_end.tv_sec - ping_start.tv_sec;
+  if(latency_s > 0){
+    latency_us = (1000000 - ping_start.tv_usec) + ping_end.tv_usec;
+  }else latency_us = ping_end.tv_usec - ping_start.tv_usec;
 
   printf("Latency: %ld ms\n",latency_us/1000);
 
