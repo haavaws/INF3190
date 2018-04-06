@@ -12,6 +12,9 @@ client: client.c
 server: server.c
 	gcc -std=gnu99 server.c -o server
 
+
+
+
 run_mip_a: mip_daemon
 	./mip_daemon -d AppA RouteA FwdA 10
 
@@ -26,6 +29,9 @@ run_mip_d: mip_daemon
 
 run_mip_e: mip_daemon
 	./mip_daemon -d AppE RouteE FwdE 100
+
+
+
 
 run_route_a: routing_daemon
 	./routing_daemon -d RouteA FwdA
@@ -42,6 +48,9 @@ run_route_d: routing_daemon
 run_route_e: routing_daemon
 	./routing_daemon -d RouteE FwdE
 
+
+
+
 run_serv_a: server
 	./server AppA
 
@@ -56,6 +65,9 @@ run_serv_d: server
 
 run_serv_e: server
 	./server AppE
+
+
+	
 
 run_ping_a_e: client
 	./client 100 testing AppA
