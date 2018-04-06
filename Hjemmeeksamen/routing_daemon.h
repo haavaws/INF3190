@@ -24,3 +24,21 @@ struct distance_table_entry{
   uint8_t *cost;
   time_t *timestamp;
 };
+
+struct routing_data{
+  struct routing_table_entry *routing_table;
+  struct distance_table_entry *distance_table;
+  time_t *last_neighbour_update;
+  uint8_t *local_mips;
+  int *num_local_mips;
+  uint8_t *neighbours;
+  int *num_neighbours;
+  time_t *last_update_timestamp;
+
+};
+
+struct sockets{
+  int *un_route_sock;
+  int *un_fwd_sock;
+  int *signal_fd;
+};
