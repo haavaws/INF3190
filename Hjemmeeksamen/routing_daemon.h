@@ -1,5 +1,6 @@
 #include <time.h>
 #include <inttypes.h>
+#include <unistd.h>
 
 #define TTL 15 /* Max TTL of any MIP packet */
 #define UNREACHABLE 16 /* Cost indicating unreachable destination */
@@ -42,3 +43,45 @@ struct sockets{
   int *un_fwd_sock;
   int *signal_fd;
 };
+
+/* Functions declared in routing.c */
+void print_rout_dest(struct routing_table_entry *routing_table);
+
+void close_sockets(struct sockets socks, int free_path);
+
+void free_distance_table(struct distance_table_entry *distance_table);
+
+int init_routing_data(struct sockets socks, struct routing_data rd, int debug);
+
+int send_routing_table_update(struct sockets socks, struct routing_data rd,
+    int debug);
+
+int clean_dist_route(struct routing_data rd, time_t now);
+
+int rm_empty_route_dist(struct routing_data rd);
+
+int create_sockets(struct sockets socks, char* un_route_name,
+    char* un_fwd_name);
+
+int create_epoll_instance(struct sockets socks);
+
+void print_routing_table(struct routing_table_entry *routing_table);
+
+void print_neighbours(uint8_t *neighbours, int num_neighbours);
+
+time_t scheduled_update(struct sockets socks, struct routing_data rd,
+    time_t now, int debug);
+
+int keyboard_signal(int signal_fd);
+
+int new_neighbour(struct routing_data rd, int src_mip, time_t now, int debug);
+
+int update_tables(struct routing_data rd,
+    struct routing_table_entry *route_update, uint8_t src_mip,
+    ssize_t recv_size, time_t now, int debug);
+
+int recv_routing_update(struct sockets socks, struct routing_data rd,
+    time_t now, int debug);
+
+int recv_fwd_req(struct sockets socks, struct routing_data rd, time_t now,
+    int debug);
