@@ -12,7 +12,7 @@
  * @return          none
  */
 void print_help(char *file_name){
-  fprintf(stderr,"USAGE: %s [-h][-d] <Socket_application> "
+  fprintf(stderr,"USAGE: %s [-h][-d] <Socket_application> <Socket_route> <Socket_forwarding>"
     "[MIP addresses ...]\n", file_name);
   fprintf(stderr,"[-h]: optional help argument\n");
   fprintf(stderr,"[-d]: optional debug argument, prints communication "
@@ -24,7 +24,7 @@ void print_help(char *file_name){
   fprintf(stderr,"<Socket_forwarding>: name of socket for IPC of forwarding "
     "lookup with the routing daemon\n");
   fprintf(stderr,"[MIP addresses ...]: one unique MIP address per interface "
-    "with a unique MAC address, in the form of a number between 0 and 255\n");
+    "with a unique MAC address, in the form of a number between 0 and 254\n");
   exit(EXIT_FAILURE);
 }
 
