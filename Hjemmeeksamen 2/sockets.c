@@ -291,7 +291,6 @@ int new_connection(int un_sock, int epfd){
   ep_conn_ev.data.fd = un_sock_conn;
 
   if(epoll_ctl(epfd, EPOLL_CTL_ADD, un_sock_conn, &ep_conn_ev) == -1){
-    fprintf(stdout,"EPOLL_FAILURE");
     return -1;
   }
 
