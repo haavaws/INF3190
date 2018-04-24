@@ -1,4 +1,7 @@
-all: routing_daemon mip_daemon client server
+all: transport_daemon routing_daemon mip_daemon client server
+
+transport_daemon: transport.c transport_daemon.c
+	gcc -std=gnu99 transport.c transport_daemon.c -o transport_daemon
 
 routing_daemon: routing.c routing_daemon.c
 	gcc -std=gnu99 routing.c routing_daemon.c -o routing_daemon
@@ -67,7 +70,7 @@ run_serv_e: server
 	./server AppE
 
 
-	
+
 
 run_ping_a_e: client
 	./client 100 testing AppA
