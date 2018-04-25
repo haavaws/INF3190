@@ -156,7 +156,7 @@ int main(int argc, char* argv[]){
       /* A keyboard interrupt was signaled */
       if(events[i].data.fd == socks->signal){
         if(keyboard_signal(events[i].data.fd) == 0){
-          close_sockets(socks,0);
+          close_sockets(socks, 1);
           free_conn_data(conn_data);
           exit(EXIT_SUCCESS);
         }
