@@ -25,7 +25,6 @@ void print_help(char *file_name){
     "lookup with the routing daemon\n");
   fprintf(stderr,"[MIP addresses ...]: one unique MIP address per interface "
     "with a unique MAC address, in the form of a number between 0 and 254\n");
-  exit(EXIT_FAILURE);
 }
 
 
