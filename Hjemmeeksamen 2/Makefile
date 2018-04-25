@@ -9,11 +9,11 @@ routing_daemon: routing.c routing_daemon.c
 mip_daemon: mip.c sockets.c debug.c mip_daemon.c
 	gcc -std=gnu99 mip.c sockets.c debug.c mip_daemon.c -o mip_daemon
 
-client: client.c
-	gcc -std=gnu99 client.c -o client
+client: transport_client.c
+	gcc -std=gnu99 transport_client.c -o client
 
-server: server.c
-	gcc -std=gnu99 server.c -o server
+server: transport_server.c
+	gcc -std=gnu99 transport_server.c -o server
 
 
 
