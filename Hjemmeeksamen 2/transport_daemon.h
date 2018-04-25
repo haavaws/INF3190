@@ -58,4 +58,5 @@ int recv_transport_packet(struct socket_container *socks,
 int resend_packets(struct conn_app *app_conn, struct socket_container *socks);
 int recv_from_app(int app_sock, struct socket_container *socks,
     struct connection_data *conn_data, int debug);
-int init_app(struct conn_app *app_conn, struct socket_container *socks, int epfd);
+int init_app(struct conn_app *app_conn, struct socket_container *socks,
+    int epfd);
