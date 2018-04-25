@@ -11,7 +11,13 @@
 #include "transport_daemon.h"
 
 
-int send_complete_packet(int mip_sock, uint8_t dest_mip, struct transport_packet *packet, int packet_size){
+
+
+
+
+int send_complete_packet(int mip_sock, uint8_t dest_mip,
+    struct transport_packet *packet, int packet_size){
+
   ssize_t ret;
 
   struct msghdr packet_msg = { 0 };
@@ -47,8 +53,8 @@ int resend_packets(struct conn_app *app_conn, struct socket_container *socks){
   int i;
   time_t now = time(NULL);
   for(i = 0; i < app_conn->num_ack_queue; i++){
-    if(send_complete_packet(socks->mip, app_conn->mip, app_conn->sent_packets[i],
-        app_conn->packet_size[i]) == -1) return -1;
+    if(send_complete_packet(socks->mip, app_conn->mip,
+        app_conn->sent_packets[i], app_conn->packet_size[i]) == -1) return -1;
     app_conn->packet_timestamp[i] = now;
   }
   return i;
@@ -845,7 +851,8 @@ int create_epoll_instance(struct socket_container *socks){
 
 
 
-int init_app(struct conn_app *app_conn, struct socket_container *socks, int epfd){
+int init_app(struct conn_app *app_conn, struct socket_container *socks,
+    int epfd){
 
   ssize_t ret;
   uint8_t mip;
@@ -1010,8 +1017,8 @@ void close_sockets(struct socket_container *socks, int unlink_mip_path){
  * @return          none
  */
 void print_help(char *file_name){
-  fprintf(stderr,"USAGE: %s <timeout> <Socket_application> "
-      "<Socket_transport> <timeout>\n", file_name);
+  fprintf(stderr,"USAGE: %s [-h] [-d] <timeout> <Socket_application> "
+      "<Socket_transport>\n", file_name);
   fprintf(stderr,"[-h]: optional help argument\n");
   fprintf(stderr,"[-d]: optional debug argument, prints communication "
     "information\n");
@@ -1021,7 +1028,6 @@ void print_help(char *file_name){
     "MIP daemon\n");
   fprintf(stderr,"<Socket_transport>: name of socket for IPC with "
     "connected transport applications\n");
-  exit(EXIT_FAILURE);
 }
 
 
