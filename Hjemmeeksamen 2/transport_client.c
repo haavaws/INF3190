@@ -6,9 +6,14 @@
 #include <sys/un.h>
 #include <sys/time.h>
 #include <unistd.h>
+#include <errno.h>
+#include <signal.h>
 
 #define MAX_FILE_SIZE 65535 /* Maximum allowed file size */
+#define MAX_PORT 16383 /* Largest possible port number */
 #define MAX_PAYLOAD_SIZE 1492 /* Maximum size of a payload */
+
+void ignore(int signum){}
 
 
 /**
@@ -18,7 +23,7 @@
  * @return          none
  */
 void print_help(char *file_name){
-  fprintf(stderr,"USAGE: %s [-h][-d] <Socket_application> <MIP address> "
+  fprintf(stderr,"USAGE: %s [-h] <Socket_application> <MIP address> "
       "<Port> <File_name>\n", file_name);
   fprintf(stderr,"[-h]: optional help argument\n");
   fprintf(stderr,"<MIP address>: the MIP address to send the file to, between "
@@ -45,12 +50,13 @@ int main(int argc, char* argv[]){
   FILE *fp;
   uint16_t file_size;
   ssize_t sent_bytes = -2;
+  size_t check;
   ssize_t ret;
   int i;
 
 
   /* ARGUMENT HANDLING */
-  if(argc >= 2){
+  if(argc > 1){
     if(strcmp(argv[1], "-h") == 0){
       print_help(argv[0]);
       exit(EXIT_SUCCESS);
@@ -65,18 +71,23 @@ int main(int argc, char* argv[]){
   sock_name = argv[1];
 
   char *endptr;
-  dest_mip = strtol(argv[2],&endptr,10);
+  check = strtol(argv[2],&endptr,10);
   if(*endptr != '\0' || argv[1][0] == '\0'){
     print_help(argv[0]);
     exit(EXIT_FAILURE);
   }
-  if(dest_mip == 255){
+  if(check == 255){
     print_help(argv[0]);
     exit(EXIT_FAILURE);
   }
+  dest_mip = check;
 
-  dest_port = strtol(argv[3],&endptr,10);
+  check = strtol(argv[3],&endptr,10);
   if(*endptr != '\0' || argv[1][0] == '\0'){
+    print_help(argv[0]);
+    exit(EXIT_FAILURE);
+  }
+  if(check > MAX_PORT){
     print_help(argv[0]);
     exit(EXIT_FAILURE);
   }
@@ -214,6 +225,15 @@ int main(int argc, char* argv[]){
   int num_digits;
   for(num_digits = 0; i / 10 > 0; num_digits++) i /= 10;
 
+  /* Catch keyboard interrupts */
+
+  struct sigaction sa = { 0 };
+
+  sa.sa_handler = ignore;
+
+  sigaction(SIGINT, &sa, NULL);
+  sigaction(SIGQUIT, &sa, NULL);
+
 
   /* Wait for progress updates from transport daemon */
   for(;;){
@@ -247,7 +267,11 @@ int main(int argc, char* argv[]){
     ret = recvmsg(un_sock, &update_msg, 0);
 
     if(ret == -1){
-      perror("\nmain: recvmsg()");
+      if(errno == EINTR){
+        fprintf(stdout, "Received interrupt from keyboard, aborting "
+            "transfer.\n");
+      }
+      else perror("\nmain: recvmsg()");
       close(un_sock);
       exit(EXIT_FAILURE);
     }else if(ret == 0){
