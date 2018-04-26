@@ -298,9 +298,9 @@ int port_listening(int port, struct socket_container *socks){
 
 
 
-int is_conn(int sock, struct conn_app *app_conns, int sock_len){
+int is_conn(int sock, struct conn_app *app_conns, int num_conns){
   int i;
-  for(i = 0; i < sock_len; i++){
+  for(i = 0; i < num_conns; i++){
     if(app_conns[i].sock == sock) return i;
   }
 
