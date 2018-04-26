@@ -286,20 +286,16 @@ ssize_t send_mip_packet(struct mip_arp_entry *arp_table,
   uint8_t src_mip;
   uint16_t eth_ptcl; /* Ethernet communication protocol */
   int i;
-  int msg_len;
   ssize_t ret;
 
-
-  /* MIP-ARP broadcast and broadcast responses have no payload */
-  if(tra == 0b000 || tra == 0b001) msg_len = 0;
-  else if (tra == 0b100 || tra == 0b010) {
-    /* Message length plus padding */
-    msg_len = payload_len;
-    if(msg_len % 4 != 0) msg_len += 4 - (msg_len % 4);
+  /* Include padding for routing updates, other packet types will already
+   * have a payload length adhering to the multiple of four requirement */
+  if(tra == 0b010){
+    if(payload_len % 4 != 0) payload_len += 4 - (payload_len % 4);
   }
 
   /* If the message is to large */
-  if(msg_len > MAX_MSG_SIZE) return -2;
+  if(payload_len > MAX_MSG_SIZE) return -2;
 
   /* If the packet is a MIP-ARP broadcast packet, set the MAC destination to
   * the MAC broadcast address, otherwise look up the MAC address and the socket
@@ -337,14 +333,14 @@ ssize_t send_mip_packet(struct mip_arp_entry *arp_table,
 
   /* Construct the ethernet frame and MIP packet and send it */
   frame = (struct ethernet_frame *) calloc (sizeof(struct ethernet_frame) +
-    msg_len, 1);
+    payload_len, 1);
 
   memcpy(frame->destination, dest_mac, MAC_SIZE);
   memcpy(frame->source, src_mac, MAC_SIZE);
   frame->protocol = eth_ptcl;
 
   construct_mip_packet(&frame->payload, dest_mip, src_mip, tra, payload,
-      msg_len);
+      payload_len);
 
   if (debug){
     fprintf(stdout, "Destination MAC: "); print_mac(frame->destination);
@@ -353,7 +349,7 @@ ssize_t send_mip_packet(struct mip_arp_entry *arp_table,
     fprintf(stdout, "\tSource MIP: %d\n", get_mip_src(&frame->payload));
   }
 
-  ret = send(send_sd, frame, sizeof(struct ethernet_frame) + msg_len, 0);
+  ret = send(send_sd, frame, sizeof(struct ethernet_frame) + payload_len, 0);
 
   if(debug) fprintf(stdout,"Bytes sent: %ld\n\n",ret);
 
@@ -1238,8 +1234,8 @@ int forward_mip_packet(int epfd, struct sockets socks,
     }else{
       ret = send_mip_packet(mip_arp_table, socks.local_mip_mac_table,
           (*queues.first_packet)->dest_mip, next_hop,
-          (*queues.first_packet)->buf,
-          strlen((char *) (*queues.first_packet)->buf) + 1, 0b100, 0, debug);
+          (*queues.first_packet)->buf, (*queues.first_packet)->payload_len,
+          0b100, 0, debug);
     }
   }
 
@@ -1330,10 +1326,11 @@ int forward_mip_packet(int epfd, struct sockets socks,
  *                              messages should be written to the terminal.
  * @returns                     Returns number of bytes received from the
  *                              connected application on normal operation, -3
- *                              if no router is connected to receive the
- *                              forward request for the received message, -2 if
- *                              the connected application has performed an
- *                              orderly shutdown and -1 on error.
+ *                              if the size of the payload is not a multiple of
+ *                              four, -4 if no router is connected to receive
+ *                              the forward request for the received message,
+ *                              -2 if the connected application has performed
+ *                              an orderly shutdown and -1 on error.
  */
 
 int recv_app_msg(int epfd, struct sockets socks, struct packet_queues queues,
@@ -1398,11 +1395,17 @@ int recv_app_msg(int epfd, struct sockets socks, struct packet_queues queues,
     fprintf(stdout,"Requesting next hop for destination from router.\n");
   }
 
+  /* Discard the packet if its payload size is not a multiple of four */
+  if((ret - 1) % 4 != 0){
+    free(msg_buf);
+    return -3;
+  }
+
   /* Discard the packet if no router was connected to receive the forwarding
    * request */
   if(*socks.un_fwd_conn == -1){
     free(msg_buf);
-    return -3;
+    return -4;
   }
 
   /* Send a forwarding request to the connected router */
