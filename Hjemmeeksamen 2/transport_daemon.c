@@ -33,7 +33,7 @@ int main(int argc, char* argv[]){
   printf("%d\n",argc);
 
   /* Argument handling */
-  if(argc >= 2){
+  if(argc > 1){
     /* Print help */
     if(strcmp(argv[1],"-h") == 0){
       print_help(argv[0]);
@@ -184,6 +184,10 @@ int main(int argc, char* argv[]){
           exit(EXIT_FAILURE);
         }else if(ret == 0){
           /* Communication error, disconnect */
+          if(debug){
+            fprintf(stdout, "Communication error with transport application, "
+                "connection closed.\n");
+          }
           continue;
         }
 
@@ -193,7 +197,7 @@ int main(int argc, char* argv[]){
         socks->num_apps++;
 
         if(debug){
-          fprintf(stdout,"Connection to transport application "
+          fprintf(stdout, "Connection to transport application "
               "established.\n\n");
         }
 
@@ -221,7 +225,7 @@ int main(int argc, char* argv[]){
       }
 
       else if(is_conn(events[i].data.fd, socks->app_conns, socks->num_apps)
-          == -1){
+          != -1){
         ret = recv_from_app(events[i].data.fd, socks, conn_data, debug);
         if(ret == -1){
           perror("main: recv_from_app()");
