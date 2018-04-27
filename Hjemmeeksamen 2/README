@@ -65,6 +65,7 @@ different servers on those hosts.
 
 To find out what host a terminal belongs to, please run the 'ip a' command in
 the terminal.
+All terminals running automatic programs will have useful titles.
 All python scripts above will run a mip daemon, routing daemon and transport
 daemon on each of the hosts in the topology the create. Their paths conform
 to the paths mentioned above.
