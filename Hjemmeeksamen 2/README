@@ -1,0 +1,77 @@
+Compilation:
+To compile the program, put all source files in a single directoy.
+
+Source files:
+transport_client.c transport_server.c mip.c debug.c socekts.c mip_daemon.c
+routing.c routing_daemon.c routing_daemon.h mip_daemon.h transport_daemon.c
+transport_daemon.h transport.c
+
+After that, open a terminal, navigate to said directory, and simply use the
+make
+command.
+
+Usage for the different programs:
+Client:
+./client [-h] <Socket_transport> <MIP_address> <Port> <File_name>
+
+Server:
+./server [-h] <Socket_transport> <Port>
+
+MIP daemon:
+./mip_daemon [-h] [-d] <Socket_application> <Socket_route> <Socket_forwarding> [MIP addresses ...]
+
+Routing daemon:
+./routing_daemon [-h] [-d] <Socket_route> <Socket_forwarding>
+
+Transport daemon:
+./transport_daemon [-h] [-d] <timeout> <Socket_application> <Socket_transport>
+
+The makefile includes some premade commands for setting up the topology as the example given in the assignment.
+
+With a topology set up like in the example in the assignment, using the
+run_mip_{letter}
+run_route_{letter}
+run_tp_{letter}
+run_serv_{letter}
+commands allow you to bind the MIP addresses seen in the example of the
+previous home exam to the right nodes, if the command is run on the host
+corresponding to the letter.
+
+Using the
+run_transfer_a_e
+command after setting up the topology, will make host A attempt to send the
+mip.c file to host E.
+
+All sockets used by these commands are on this form:
+<Socket_application>: app{LETTER}
+<Socket_route>:       route{LETTER}
+<Socket_forwarding>:  fwd{LETTER}
+<Socket_transport>:   tp{LETTER}
+
+This means the commands in the Makefile can be mixed with manual execution, if
+these sockets are used.
+
+In addition to those, there are four python scripts included, each setting up
+different topologies.
+
+simpletopology.py sets up a simple A-B topology, each with one MIP address.
+The paths above can be used to interact with the terminals.
+topology.py sets up a an A-B-C topology.
+complextopology.py sets up the topology used as an example in the previous
+exam.
+testtopology.py sets up the same topology as complextopology.py, but also
+attempts to transfer several files between severl different hosts to several
+different servers on those hosts.
+
+To find out what host a terminal belongs to, please run the 'ip a' command in
+the terminal.
+All python scripts above will run a mip daemon, routing daemon and transport
+daemon on each of the hosts in the topology the create. Their paths conform
+to the paths mentioned above.
+
+Stopping execution:
+To exit the application, exiting from the MIP daemon will make any connected
+routing daemon and transport daemon with its connected application shut down
+properly.
+
+Otherwise all programs can be shut down using Ctrl-C and Ctrl-\
