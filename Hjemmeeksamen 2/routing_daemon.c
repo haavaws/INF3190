@@ -168,6 +168,9 @@ int main(int argc, char *argv[]){
 
       /* If a data was received on the routing socket */
       if(events[i].data.fd == un_route_sock){
+        if(debug){
+          fprintf(stdout, "\n");
+        }
 
         ret = recv_routing_update(sock_container, routing_data_container, now,
             debug);
@@ -176,6 +179,7 @@ int main(int argc, char *argv[]){
           perror("main: recv_routing_update");
           close_sockets(sock_container, 0);
           free_distance_table(distance_table);
+          exit(EXIT_FAILURE);
         }else if(ret == -2){
           fprintf(stderr,"MIP daemon performed a shutdown, lost connection, "
               "aborting\n");
@@ -183,21 +187,33 @@ int main(int argc, char *argv[]){
           free_distance_table(distance_table);
           exit(EXIT_FAILURE);
         }
+        if(debug){
+          fprintf(stdout, "\n");
+        }
       } /* Receive data on routing socket END */
 
       else if(events[i].data.fd == un_fwd_sock){
-        recv_fwd_req(sock_container, routing_data_container, now, debug);
+        if(debug){
+          fprintf(stdout, "\n");
+        }
+
+        ret = recv_fwd_req(sock_container, routing_data_container, now, debug);
 
         if(ret == -1){
           perror("main: recv_fwd_req");
           close_sockets(sock_container, 0);
           free_distance_table(distance_table);
+          exit(EXIT_FAILURE);
         }else if(ret == -2){
           fprintf(stderr,"MIP daemon performed a shutdown, lost connection, "
               "aborting\n");
           close_sockets(sock_container, 1);
           free_distance_table(distance_table);
           exit(EXIT_FAILURE);
+        }
+        
+        if(debug){
+          fprintf(stdout, "\n");
         }
       } /* Receive data on forward socket END */
     }
