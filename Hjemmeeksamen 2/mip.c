@@ -42,7 +42,7 @@ void free_queues(struct packet_queues queue_container){
  *
  * @param mac1  The first MAC address to check
  * @param mac2  The second MAC address to check
- * @returns     Returns 1 on equal, 0 on not equal
+ * @return      Returns 1 on equal, 0 on not equal
  */
 int mac_eql(uint8_t *mac1, uint8_t *mac2){
   int i;
@@ -426,6 +426,17 @@ int send_complete_packet(struct mip_arp_entry *arp_table,
   /* Send the packet */
   ret = send(send_sd, frame, frame_size, 0);
 
+  if(ret != -1){
+
+    if (debug){
+      fprintf(stdout, "Destination MAC: "); print_mac(frame->destination);
+      fprintf(stdout, "\tDestination MIP: %d\n", get_mip_dest(&frame->payload));
+      fprintf(stdout, "Source Mac: "); print_mac(frame->source);
+      fprintf(stdout, "\tSource MIP: %d\n", get_mip_src(&frame->payload));
+      fprintf(stdout, "Bytes sent: %ld\n\n", ret);
+    }
+  }
+
   return ret;
 
 }/* send_complete_packet() END */
@@ -646,7 +657,7 @@ int recv_mip_packet(struct mip_arp_entry *mip_arp_table, int socket,
 
     if(*queue_container.first_packet == NULL){
       *queue_container.first_packet = packet;
-      *queue_container.last_packet = *queue_container.last_packet;
+      *queue_container.last_packet = *queue_container.first_packet;
     }else{
       (*queue_container.last_packet)->next_packet = packet;
       *queue_container.last_packet =
@@ -759,7 +770,7 @@ int recv_mip_packet(struct mip_arp_entry *mip_arp_table, int socket,
     transport_iov[0].iov_len = sizeof(src_mip);
 
     transport_iov[1].iov_base = mip_payload;
-    transport_iov[1].iov_len = strlen((char *) mip_payload) + 1;
+    transport_iov[1].iov_len = payload_len;
 
     transport_msg.msg_iov = transport_iov;
     transport_msg.msg_iovlen = 2;
@@ -843,11 +854,6 @@ int recv_mip_packet(struct mip_arp_entry *mip_arp_table, int socket,
 
   return mip_tra;
 } /* recv_mip_packet END */
-
-
-
-
-
 
 
 
@@ -1154,7 +1160,7 @@ int forward_mip_packet(int epfd, struct sockets socks,
   for(i = 0; i < *socks.num_eth_sds; i++){
     if(next_hop == socks.local_mip_mac_table[i].mip_addr){
       if(debug){
-        fprintf(stdout, "Adress is a local MIP address.\n");
+        fprintf(stdout, "Address is a local MIP address.\n");
       }
 
       /* Discard packet if no application is connected to receive it */
@@ -1183,7 +1189,9 @@ int forward_mip_packet(int epfd, struct sockets socks,
       transport_iov[0].iov_len = sizeof((*queues.first_packet)->src_mip);
 
       transport_iov[1].iov_base = payload;
-      transport_iov[1].iov_len = strlen((char *) payload) + 1;
+      transport_iov[1].iov_len =
+        get_mip_payload_len(&((struct ethernet_frame *)
+        (*queues.first_packet)->buf)->payload) * 4;
 
       transport_msg.msg_iov = transport_iov;
       transport_msg.msg_iovlen = 2;
@@ -1195,7 +1203,7 @@ int forward_mip_packet(int epfd, struct sockets socks,
       }
 
       if(debug){
-        fprintf(stdout, "Sent %ld bytes to connected application.\n", ret);
+        fprintf(stdout, "Sent %ld bytes to connected application.\n\n", ret);
       }
 
       break;
