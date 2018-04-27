@@ -13,6 +13,7 @@
 #define MAX_PORT 16383 /* Largest possible port number */
 #define MAX_PAYLOAD_SIZE 1492 /* Maximum size of a payload */
 
+/* Signal handler dummy function */
 void ignore(int signum){}
 
 
@@ -23,7 +24,7 @@ void ignore(int signum){}
  * @return          none
  */
 void print_help(char *file_name){
-  fprintf(stderr,"USAGE: %s [-h] <Socket_application> <MIP address> "
+  fprintf(stderr,"USAGE: %s [-h] <Socket_transport> <MIP address> "
       "<Port> <File_name>\n", file_name);
   fprintf(stderr,"[-h]: optional help argument\n");
   fprintf(stderr,"<MIP address>: the MIP address to send the file to, between "
@@ -35,27 +36,35 @@ void print_help(char *file_name){
 
 
 int main(int argc, char* argv[]){
-  int un_sock;
+  int un_sock; /* Transport daemon socket */
+
+  /* File destination */
   uint8_t dest_mip;
   uint16_t dest_port;
 
-  char* sock_name;
+  char* sock_name; /* Transport daemon socket path */
   char* file_name;
 
+  /* Time data for determining how long transfer took */
   struct timeval start = { 0 };
   struct timeval end = { 0 };
   time_t transfer_time_s;
   time_t transfer_time_u;
 
+  /* File data */
   FILE *fp;
   uint16_t file_size;
-  ssize_t sent_bytes = -2;
+  /* Amount of bytes sent to transport daemon, and later amount of data acked
+   * by recipient of file */
+  ssize_t sent_bytes = 0;
+
   size_t check;
   ssize_t ret;
   int i;
 
 
   /* ARGUMENT HANDLING */
+
   if(argc > 1){
     if(strcmp(argv[1], "-h") == 0){
       print_help(argv[0]);
@@ -68,8 +77,10 @@ int main(int argc, char* argv[]){
     exit(EXIT_FAILURE);
   }
 
+  /* Transport daemon socket path */
   sock_name = argv[1];
 
+  /* Destination MIP address */
   char *endptr;
   check = strtol(argv[2],&endptr,10);
   if(*endptr != '\0' || argv[1][0] == '\0'){
@@ -82,6 +93,7 @@ int main(int argc, char* argv[]){
   }
   dest_mip = check;
 
+  /* Port */
   check = strtol(argv[3],&endptr,10);
   if(*endptr != '\0' || argv[1][0] == '\0'){
     print_help(argv[0]);
@@ -91,10 +103,11 @@ int main(int argc, char* argv[]){
     print_help(argv[0]);
     exit(EXIT_FAILURE);
   }
+  dest_port = check;
 
   file_name = argv[4];
 
-
+  /* Create socket */
   un_sock = socket(AF_UNIX,SOCK_SEQPACKET,0);
 
   if(un_sock == -1){
@@ -102,7 +115,7 @@ int main(int argc, char* argv[]){
     exit(EXIT_FAILURE);
   }
 
-  /* Connect to MIP daemon */
+  /* Connect to transport daemon */
   struct sockaddr_un sockaddr;
   sockaddr.sun_family = AF_UNIX;
   strcpy(sockaddr.sun_path, sock_name);
@@ -113,6 +126,7 @@ int main(int argc, char* argv[]){
     exit(EXIT_FAILURE);
   }
 
+  /* Open file */
   fp = fopen(file_name, "rb");
 
   if(!fp){
@@ -126,6 +140,7 @@ int main(int argc, char* argv[]){
   if(fseek(fp, 0, SEEK_END) == -1){
     perror("main: fseek(): SEEK_END");
     close(un_sock);
+    fclose(fp);
     exit(EXIT_FAILURE);
   }
 
@@ -133,12 +148,14 @@ int main(int argc, char* argv[]){
   if(actual_size == -1){
     perror("main: ftell()");
     close(un_sock);
+    fclose(fp);
     exit(EXIT_FAILURE);
   }
 
   if(fseek(fp, 0, SEEK_SET) == -1){
     perror("main: fseek(): SEEK_SET");
     close(un_sock);
+    fclose(fp);
     exit(EXIT_FAILURE);
   }
 
@@ -148,6 +165,7 @@ int main(int argc, char* argv[]){
     fprintf(stderr, "File size: %ld\tMax size: %d\n",
         actual_size, MAX_FILE_SIZE);
     close(un_sock);
+    fclose(fp);
     exit(EXIT_FAILURE);
   }
 
@@ -169,26 +187,32 @@ int main(int argc, char* argv[]){
   if(sendmsg(un_sock, &init_msg, 0) == -1){
     perror("main: sendmsg(): init_msg");
     close(un_sock);
+    fclose(fp);
     exit(EXIT_FAILURE);
   }
 
+  /* Start of file transfer */
   gettimeofday(&start, NULL);
+
   /* Send the file to the transport daemon */
   for(;;){
     uint8_t file_segment[MAX_PAYLOAD_SIZE];
     int offset = 0;
 
-    if(sent_bytes < 0){
+    if(sent_bytes == 0){
+      /* Prepend the first delivery with the size of the file */
       file_segment[0] = file_size >> 8;
       file_segment[1] = (uint8_t) file_size;
       offset = 2;
-      sent_bytes += 2;
     }
 
+    /* Read chunk of file to send */
     ret = fread(&file_segment[offset], 1, MAX_PAYLOAD_SIZE - offset, fp);
 
+    /* Stop sending if there is no more data to read from the file */
     if(ret == 0) break;
 
+    /* Send it to the transport daemon */
     struct msghdr segment_msg = { 0 };
     struct iovec segment_iov[1];
 
@@ -201,14 +225,22 @@ int main(int argc, char* argv[]){
     if(sendmsg(un_sock, &segment_msg, 0) == -1){
       perror("main: sendmsg(): segment_msg");
       close(un_sock);
+      fclose(fp);
       exit(EXIT_FAILURE);
     }
 
+    /* Update amount of bytes sent to transport daemon */
     sent_bytes += ret;
 
+    /* Stop sending if the end of file was reached */
     if(ret < MAX_PAYLOAD_SIZE - offset) break;
   }
 
+  /* Close the file */
+  fclose(fp);
+
+  /* If the amount of bytes sent to the transport daemon did not equal the
+   * file size, abort */
   if(sent_bytes != file_size){
     fprintf(stderr, "Finished sending file to transfer daemon, but amount "
         "did not match file size, aborting.\n");
@@ -216,17 +248,17 @@ int main(int argc, char* argv[]){
     exit(EXIT_FAILURE);
   }
 
-  sent_bytes = -2;
+  sent_bytes = 0;
 
   fprintf(stdout, "Transferring file \"%s\" of %d bytes:\n", file_name,
       file_size);
 
+  /* Used for printing purposes */
   i = file_size;
   int num_digits;
   for(num_digits = 0; i / 10 > 0; num_digits++) i /= 10;
 
   /* Catch keyboard interrupts */
-
   struct sigaction sa = { 0 };
 
   sa.sa_handler = ignore;
@@ -250,16 +282,20 @@ int main(int argc, char* argv[]){
     for(; i < 40 - (num_digits * 2); i++){
       fprintf(stdout, " ");
     }
-    fprintf(stdout, "| %3d%%\n", sent_bytes >= 0 ? (int)((double)sent_bytes / file_size * 100) : 0);
+    fprintf(stdout, "| %3d%%", sent_bytes >= 0 ? (int)((double)sent_bytes / file_size * 100) : 0);
     fflush(stdout);
 
+    /* If the entire file has been acked, stop */
+    if(sent_bytes == file_size) break;
 
+    /* Wait for update on receipt of data by recipient from transport daemon */
+    uint16_t acked_bytes;
 
     struct msghdr update_msg = { 0 };
     struct iovec update_iov[1];
 
-    update_iov[0].iov_base = &ret;
-    update_iov[0].iov_len = sizeof(ret);
+    update_iov[0].iov_base = &acked_bytes;
+    update_iov[0].iov_len = sizeof(acked_bytes);
 
     update_msg.msg_iov = update_iov;
     update_msg.msg_iovlen = 1;
@@ -268,7 +304,7 @@ int main(int argc, char* argv[]){
 
     if(ret == -1){
       if(errno == EINTR){
-        fprintf(stdout, "Received interrupt from keyboard, aborting "
+        fprintf(stdout, "\nReceived interrupt from keyboard, aborting "
             "transfer.\n");
       }
       else perror("\nmain: recvmsg()");
@@ -279,17 +315,20 @@ int main(int argc, char* argv[]){
       fprintf(stdout, "\nDisconnected from the trasnport daemon, shutting "
           "down.\n");
       close(un_sock);
-      unlink(file_name);
+      unlink(sock_name);
       exit(EXIT_FAILURE);
     }
 
-    sent_bytes += ret;
 
-    if(sent_bytes == file_size) break;
+    /* Don't include the file size sent */
+    sent_bytes = acked_bytes - 2;
+
   }
 
+  /* End of transfer time */
   gettimeofday(&end, NULL);
 
+  /* Calculate time it took to send the file */
   transfer_time_s = end.tv_sec - start.tv_sec;
   if(start.tv_usec > end.tv_usec){
     transfer_time_s--;
