@@ -14,39 +14,47 @@
 #define MAX_PAYLOAD_SIZE 1492 /* Maximum size of a payload */
 #define SAVE_NAME "receivedFile"
 
-void ignore(int moo){
-
+/* Signal handler dummy function */
+void ignore(int signum){
 }
 
 
 /**
  * Prints usage information to stderr for the user
  *
- * @param file_name Filename of the user executed, argv[0]
+ * @param file_name Filename of the user executed file, argv[0]
  * @return          none
  */
 void print_help(char *file_name){
-  fprintf(stderr,"USAGE: %s [-h] <Socket_application> <Port>\n",
+  fprintf(stderr,"USAGE: %s [-h] <Socket_transport> <Port>\n",
       file_name);
   fprintf(stderr,"[-h]: optional help argument\n");
-  fprintf(stderr,"<MIP address>: the MIP address to send the file to, between "
-      "0 and 254.\n");
   fprintf(stderr,"<Port>: port to send the file through.\n");
-  fprintf(stderr,"<File_name>: name of the file to send, which is smaller "
-      "than 64 KiB.\n");
 }
 
+
+/**
+ * Attempts to open the first available file with name SAVE_NAME{N}, where {N}
+ * is a number starting at the number provided, and SAVE_NAME is a global variable.
+ *
+ * @param file_counter  The number to start at when attempting to open files.
+ * @param file_name     Pointer to store the file name that was opened.
+ * @return              Returns a pointer to the opened file on success and
+ *                      NULL onn error.
+ */
 FILE *open_next_available(int *file_counter, char **file_name){
   int i,j;
   FILE *fp;
 
   int save_name_len;
 
+  /* Length of the base of the file name attempting to be opened */
   for(save_name_len = 0; SAVE_NAME[save_name_len] != '\0'; save_name_len++);
 
 
-  for(i = *file_counter; i > 0; i++){
+  for(i = *file_counter; i >= 0; i++){
 
+    /* Length of the number at the end of the file name */
     int num_digits;
     for(j = *file_counter; j / 10 > 0; j /= 10) num_digits++;
 
@@ -54,14 +62,17 @@ FILE *open_next_available(int *file_counter, char **file_name){
     strncpy((*file_name), SAVE_NAME, save_name_len);
     sprintf(&(*file_name)[save_name_len], "%d", *file_counter);
 
+    /* Check if the file exists */
     fp = fopen((*file_name), "r");
 
     if(fp){
+      /* If it does, close it and try the next one */
       fclose(fp);
       (*file_counter)++;
       free((*file_name));
       continue;
     }else{
+      /* If it doesn't open the file and return a pointer to it */
       fp = fopen((*file_name), "wb");
 
       if(!fp){
@@ -78,16 +89,30 @@ FILE *open_next_available(int *file_counter, char **file_name){
 
 }
 
-
+/**
+ * Close all files and free all allocated memory in the provided arguments.
+ *
+ * @param files           Files currently being transferred.
+ * @param file_names      Names of the files currently being transferred.
+ * @param file_sizes      Sizes of the files currently being transferred.
+ * @param bytes_received  Bytes received of the files currently being
+ *                        transferred.
+ * @param src_mips        Source MIP addresses of the files currently being
+ *                        transferred.
+ * @param num_files       Number of files currently being transferred.
+ * @return                None
+ */
 void prepare_shutdown(FILE **files, char **file_names, uint16_t *file_sizes,
     uint16_t *bytes_received, uint8_t *src_mips, int num_files){
 
+  /* Close files */
   int i;
   for(i = 0; i < num_files; i++){
     fclose(files[i]);
     free(file_names[i]);
   }
 
+  /* Free data */
   free(files);
   free(file_names);
   free(file_sizes);
@@ -96,7 +121,19 @@ void prepare_shutdown(FILE **files, char **file_names, uint16_t *file_sizes,
 
 }
 
-
+/**
+ * Remove a transfer session, and close the associate file, but don't delete
+ * it.
+ *
+ * @param files           Pointer to the list of file pointers.
+ * @param file_names      Pointer to the list of file names.
+ * @param file_sizes      Pointer to the list of file sizes.
+ * @param bytes_received  Pointer to the list of bytes receieved for files.
+ * @param src_mips        Pointer to the list of source MIP addresses of files.
+ * @param num_receiving   Number of files currently being transferred.
+ * @param src_mip         The source MIP address of the session to be removed.
+ * @return                Returns 1 if a session was removed, and 0 if not.
+ */
 int remove_session(FILE ***files, char ***file_names, uint16_t **file_sizes,
     uint16_t **bytes_received, uint8_t **src_mips, int *num_receiving,
     uint8_t src_mip){
@@ -104,8 +141,11 @@ int remove_session(FILE ***files, char ***file_names, uint16_t **file_sizes,
   int ret = 0;
   int i;
 
+  /* Iterate through all sessions */
   for(i = 0; i < (*num_receiving); i++){
+    /* If the MIP address is the one whose session is to be removed. */
     if((*src_mips)[i] == src_mip){
+      /* Close the associated file */
       fclose((*files)[i]);
 
       /* Remove and reorder the data */
@@ -141,18 +181,38 @@ int remove_session(FILE ***files, char ***file_names, uint16_t **file_sizes,
 }
 
 
-
+/**
+ * Removes any existing transfer from the provided MIP address, and creates a
+ * new session for that MIP address.
+ *
+ * @param files           Pointer to files currently being transferred.
+ * @param file_names      Pointer to names of files currently being
+ *                        transferred.
+ * @param file_sizes      Pointer to sizes of files currently being
+ *                        transffered.
+ * @param bytes_received  Pointer to amount of bytes received for files
+ *                        currently being transferred.
+ * @param src_mips        Pointer to source MIP addresses of files currently
+ *                        being transferred.
+ * @param file_counter    Number suffix of the name of the last opene file.
+ * @param num_receiving   Number of files currently being transferred.
+ * @param file_size       Size of the new file being transferred.
+ * @param src_mip         Source MIP address of the new file being transferred.
+ * @return                Returns 1 on success and -1 on error.
+ */
 int new_transfer(FILE ***files, char ***file_names, uint16_t **file_sizes,
     uint16_t **bytes_received, uint8_t **src_mips, int *file_counter,
     int *num_receiving, uint16_t file_size, uint8_t src_mip){
 
   char *file_name;
 
-  int ret = remove_session(files, file_names, file_sizes, bytes_received, src_mips,
-      num_receiving, src_mip);
+  /* Remove any previous session for the source MIP address */
+  int ret = remove_session(files, file_names, file_sizes, bytes_received,
+      src_mips, num_receiving, src_mip);
 
   (*num_receiving)++;
 
+  /* Allocate space for the new session */
   (*files) = (FILE **) realloc((*files), (*num_receiving) * sizeof((*files)));
   (*file_names) =
       (char **) realloc((*file_names), (*num_receiving) * sizeof(char));
@@ -163,6 +223,7 @@ int new_transfer(FILE ***files, char ***file_names, uint16_t **file_sizes,
   (*src_mips) =
       (uint8_t *) realloc((*src_mips), (*num_receiving) * sizeof(uint8_t));
 
+  /* Initialize data */
   (*files)[(*num_receiving) - 1] =
       open_next_available(file_counter, &file_name);
   (*file_names)[(*num_receiving) - 1] = file_name;
@@ -180,9 +241,10 @@ int new_transfer(FILE ***files, char ***file_names, uint16_t **file_sizes,
 
 
 int main(int argc, char* argv[]){
-  int un_sock;
-  uint16_t listen_port;
+  int un_sock; /* Socket for communication with transport daemon */
+  uint16_t listen_port; /* Listening port */
 
+  /* Session data */
   FILE **receiving_files = NULL;
   char **file_names = NULL;
   uint16_t *file_sizes = NULL;
@@ -191,7 +253,7 @@ int main(int argc, char* argv[]){
   int file_counter = 0;
   int num_receiving = 0;
 
-  char* sock_name;
+  char* sock_name; /* Path of the transport daemon socket */
 
   ssize_t ret;
   int i;
@@ -213,6 +275,7 @@ int main(int argc, char* argv[]){
 
   sock_name = argv[1];
 
+  /* Port */
   char *endptr;
   check = strtol(argv[2],&endptr,10);
   if(*endptr != '\0' || argv[1][0] == '\0'){
@@ -225,7 +288,7 @@ int main(int argc, char* argv[]){
   }
   listen_port = check;
 
-
+  /* Create the socket */
   un_sock = socket(AF_UNIX,SOCK_SEQPACKET,0);
 
   if(un_sock == -1){
@@ -245,7 +308,6 @@ int main(int argc, char* argv[]){
   }
 
   /* Catch keyboard interrupts */
-
   struct sigaction sa = { 0 };
 
   sa.sa_handler = ignore;
@@ -273,11 +335,14 @@ int main(int argc, char* argv[]){
     exit(EXIT_FAILURE);
   }
 
-
+  /* Receive files */
   for(;;){
-    fprintf(stdout, "NOW LOOPING\n");
     ssize_t payload_size;
+    /* Offset when reading from buffer to write to file, to exclude the file
+     * file size */
     int offset = 0;
+
+    /* Receive file segment */
     uint8_t src_mip;
     int new_session;
     uint8_t file_segment[MAX_PAYLOAD_SIZE];
@@ -302,22 +367,27 @@ int main(int argc, char* argv[]){
     if(ret == -1){
       close(un_sock);
       if(errno == EINTR){
-        fprintf(stdout, "Received interrupt from keyboard, shutting down file server.\n");
+        fprintf(stdout, "\nReceived interrupt from keyboard, shutting down "
+            "file server.\n");
         exit(EXIT_SUCCESS);
       }
       perror("main: recvmsg()");
       exit(EXIT_FAILURE);
     }else if(ret == 0){
-      fprintf(stdout, "Transport daemon has performed an orderly shutdown, "
+      fprintf(stdout, "\nTransport daemon has performed an orderly shutdown, "
           "lost connection, aborting.\n");
-      prepare_shutdown(receiving_files, file_names, file_sizes, bytes_received, src_mips, num_receiving);
+      prepare_shutdown(receiving_files, file_names, file_sizes, bytes_received,
+          src_mips, num_receiving);
       exit(EXIT_FAILURE);
     }
 
     payload_size = ret - sizeof(src_mip) - sizeof(new_session);
 
+    fprintf(stdout, "Received file segment of %ld bytes from MIP address %d "
+        "from transport daemon.\n", payload_size, src_mip);
+
     /* If segment was the start of a new transfer */
-    if(new_session == 1){
+    if(new_session > 0){
       uint16_t file_size = 0;
 
       file_size |= file_segment[0] << 8;
@@ -326,47 +396,71 @@ int main(int argc, char* argv[]){
       offset = sizeof(file_size);
       payload_size -= offset;
 
-      fprintf(stdout, "Received file segment was the start of a new transfer.\n");
+      fprintf(stdout, "Received file segment was the start of a new "
+          "transfer.\n");
+      fprintf(stdout, "Size of file being transferred: %d bytes.\n",
+          file_size);
 
-      ret = new_transfer(&receiving_files, &file_names, &file_sizes, &bytes_received, &src_mips, &num_receiving, &file_counter, file_size, src_mip);
+      /* Create a new transfer session */
+      ret = new_transfer(&receiving_files, &file_names, &file_sizes,
+          &bytes_received, &src_mips, &file_counter, &num_receiving, file_size,
+          src_mip);
 
       if(ret == -1){
         fprintf(stderr, "No available file to store received data, aborting "
             "server.\n");
-        prepare_shutdown(receiving_files, file_names, file_sizes, bytes_received, src_mips, num_receiving - 1);
+        prepare_shutdown(receiving_files, file_names, file_sizes,
+            bytes_received, src_mips, num_receiving - 1);
         exit(EXIT_FAILURE);
       }
-      else if(ret == 0){
-        fprintf(stdout, "The new transfer had the same source as an ongoing trasnfer.\n");
+      else if(ret == 1){
+        fprintf(stdout, "The new transfer had the same source as an ongoing "
+            "trasnfer.\n");
         fprintf(stdout, "Aborting previous transfer.\n");
       }
     }
 
     /* Write the received data to file */
     for(i = 0; i < num_receiving; i++){
+      /* Look for the session for the source MIP address */
       if(src_mips[i] == src_mip){
         bytes_received[i] += payload_size;
 
+        /* Write the received data to file, excluding the file size */
         ret = fwrite(&file_segment[offset], sizeof(*file_segment),
             payload_size, receiving_files[i]);
 
         if(ret != payload_size){
           perror("main: fwrite()");
-          prepare_shutdown(receiving_files, file_names, file_sizes, bytes_received, src_mips, num_receiving - 1);
+          prepare_shutdown(receiving_files, file_names, file_sizes,
+              bytes_received, src_mips, num_receiving - 1);
           exit(EXIT_FAILURE);
         }
 
+        fprintf(stdout, "%ld bytes written to file: \"%s\"\n", ret,
+            file_names[i]);
+
+        /* If more data has been received than the size of the file, abort the
+         * transfer */
         if(bytes_received[i] > file_sizes[i]){
-          fprintf(stderr, "Amount of bytes received exceeds the size of the file being transferred, aborting transfer.\n");
-          remove_session(&receiving_files, &file_names, &file_sizes, &bytes_received, &src_mips, &num_receiving, src_mip);
-        }else if(bytes_received[i] == file_sizes[i]){
-          fprintf(stdout, "File transfer from MIP address %d of %d bytes has completed.", src_mip, file_sizes[i]);
+          fprintf(stderr, "Amount of bytes received exceeds the size of the "
+              "file being transferred, aborting transfer.\n");
+          remove_session(&receiving_files, &file_names, &file_sizes,
+              &bytes_received, &src_mips, &num_receiving, src_mip);
+        }
+        /* If the transfer of the file is complete, close the file and remove
+         * the session */
+        else if(bytes_received[i] == file_sizes[i]){
+          fprintf(stdout, "File transfer from MIP address %d of %d bytes has "
+              "completed.\n", src_mip, file_sizes[i]);
+          remove_session(&receiving_files, &file_names, &file_sizes,
+              &bytes_received, &src_mips, &num_receiving, src_mip);
         }
 
         break;
       }
-    }
+    }/* WRITE TO FILE END */
 
 
-  }
-}
+  }/* RECEIVE FILES END */
+}/* MAIN END */
